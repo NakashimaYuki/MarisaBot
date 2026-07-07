@@ -11,6 +11,13 @@
             <!-- ── ranking columns（列内从上到下，列间接续） ── -->
             <div class="flex gap-6 mt-6 items-start">
                 <div v-for="(col, ci) in columns" :key="ci" class="flex-1 min-w-0 flex flex-col gap-[6px]">
+                    <div class="rank-head">
+                        <span class="rh-rank">#</span>
+                        <span class="rh-song">曲目</span>
+                        <span class="rh-diff">难度</span>
+                        <span class="rh-ds">定数</span>
+                        <span class="rh-val">{{ valueHead }}</span>
+                    </div>
                     <div v-for="r in col" :key="r.songId + '-' + r.li" class="rank-row">
                         <span class="rr-rank tabular-nums">#{{ r.rank }}</span>
                         <img :src="coverSrcOf(r.songId)" @error="onCoverErr" alt="" class="rr-cover">
@@ -116,6 +123,7 @@ const heading = computed(() => dsQ.value != null
 const legend = computed(() => isDsKind.value
     ? '排序依据：综合拟合定数'
     : '排序依据：同等级难度百分位（100 = 组内最难）')
+const valueHead = computed(() => isDsKind.value ? '拟合定数' : '百分位')
 
 // 列数按体量：>240 三列、>80 两列，卡宽随列数
 const colCount = computed(() => rows.value.length > 240 ? 3 : rows.value.length > 80 ? 2 : 1)
@@ -139,6 +147,14 @@ function onCoverErr(e: Event) {
 <style scoped lang="postcss">
 .rank-title { font-family: 'Microsoft YaHei',sans-serif; font-weight: bold; font-size: 26px; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.5); white-space: nowrap; }
 .count-chip { font-size: 14px; letter-spacing: 0.14em; color: rgba(255,255,255,0.55); white-space: nowrap; }
+
+.rank-head { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 8px; margin-bottom: -2px; }
+.rank-head > span { font-family: 'Torus','Microsoft YaHei',sans-serif; font-weight: bold; font-size: 11px; letter-spacing: 0.05em; color: rgba(255,255,255,0.42); }
+.rh-rank { flex: 0 0 44px; }
+.rh-song { flex: 1 1 auto; min-width: 0; }
+.rh-diff { flex: 0 0 40px; text-align: center; }
+.rh-ds { flex: 0 0 36px; text-align: right; }
+.rh-val { flex: 0 0 50px; text-align: right; white-space: nowrap; }
 
 .rank-row { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px 0 8px; border-radius: 8px; background: rgba(0,0,0,0.30); border: 1px solid rgba(255,255,255,0.08); }
 .rr-rank { flex: 0 0 44px; font-family: 'Torus',sans-serif; font-weight: bold; font-size: 15px; color: rgba(255,255,255,0.6); }
