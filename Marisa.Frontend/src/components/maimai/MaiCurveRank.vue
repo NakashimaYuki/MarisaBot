@@ -30,12 +30,8 @@
                 </div>
             </div>
 
-            <footer class="mt-5 flex items-end justify-between gap-6">
-                <div class="flex flex-col gap-[2px] min-w-0">
-                    <div class="foot-note">数据来源：水鱼查分器（diving-fish.com）成绩聚合统计</div>
-                    <div class="foot-note">{{ legend }}</div>
-                    <div class="foot-note">拟合算法与水鱼拟合定数不同</div>
-                </div>
+            <footer class="mt-5 flex items-baseline justify-between gap-6">
+                <div class="foot-note min-w-0 whitespace-nowrap">数据来源：水鱼查分器 · {{ legend }}</div>
                 <span class="footer-text shrink-0">MARISA BOT · DIFFICULTY RANKING</span>
             </footer>
     </MaiCardShell>
@@ -122,7 +118,7 @@ const heading = computed(() => dsQ.value != null
     : `等级 ${levelQ.value} 拟合难度排名`)
 const legend = computed(() => isDsKind.value
     ? '排序依据：综合拟合定数'
-    : '排序依据：同等级难度百分位（100 = 组内最难）')
+    : '排序依据：同等级难度百分位')
 const valueHead = computed(() => isDsKind.value ? '拟合定数' : '百分位')
 
 // 列数按体量：>240 三列、>80 两列，卡宽随列数
