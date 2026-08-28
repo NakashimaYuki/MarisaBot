@@ -4,12 +4,7 @@ using Flurl.Http;
 namespace Marisa.Plugin.Shared.MaiMaiDx;
 
 /// <summary>
-///     bakapiano 的 maimai-score-hub (MSH) 公开 API 的轻量客户端。
-///     用于 <c>maimai 导</c> 命令把玩家的华立成绩推到他【本人】的水鱼 / 落雪查分器。
-///     MSH 官方开放接入（公开 OpenAPI + 全开 CORS）；我们带一个专门的 User-Agent 表明身份。
-///     契约见 https://github.com/bakapiano/maimai-score-hub/blob/main/shared/openapi/openapi.yaml
-///     2026-07 起 MSH 迁移到 /api/v1 并拆分任务模型：登录任务只负责建立好友关系并下发 JWT，
-///     抓分是独立的 update_score 任务（POST /me/dxnet-jobs），向查分器导出为异步任务需轮询结果。
+///     通过 maimai-score-hub 创建 DXNet 抓分任务，并将结果导出到用户配置的查分器。
 /// </summary>
 public class MaiScoreHubClient
 {
