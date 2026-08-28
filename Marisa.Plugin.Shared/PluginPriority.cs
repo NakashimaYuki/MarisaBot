@@ -2,7 +2,6 @@
 
 public static class PluginPriority
 {
-    public const int DivingFishConfirmation = 12;
     public const int BlackList = 11;
     public const int WordCloud = 10;
     public const int Dialog = 9;

@@ -82,12 +82,6 @@ public partial class MaiMaiDx
 
                     if (idx == 0 && DivingFishOAuth.IsConfigured)
                     {
-                        if (next.Type != MessageType.GroupMessage || next.GroupInfo == null)
-                        {
-                            next.Reply("为验证 QQ 与授权账号的对应关系，水鱼 OAuth 只能在群聊中绑定。");
-                            return MarisaPluginTaskState.CompletedTask;
-                        }
-
                         try
                         {
                             if (await DivingFishTokenStore.GetValidToken(next.Sender.Id, "maimai") != null)
@@ -108,10 +102,7 @@ public partial class MaiMaiDx
                             return MarisaPluginTaskState.CompletedTask;
                         }
 
-                        var pending = DivingFishPendingAuth.Begin(
-                            next.Sender.Id,
-                            next.GroupInfo.Id,
-                            "maimai");
+                        var pending = DivingFishPendingAuth.Begin("maimai");
                         var authorizeUrl = await DivingFishOAuth.BuildAuthorizeUrl(
                             pending.State,
                             pending.CodeChallenge,
@@ -119,8 +110,14 @@ public partial class MaiMaiDx
 
                         next.Reply(MessageChain.FromSensitiveText(
                             $"请打开水鱼官方授权链接并登录你自己的账号（10 分钟内有效）：\n{authorizeUrl}\n\n" +
-                            "浏览器授权后会显示一次性确认命令；请由当前 QQ 在当前群发送。不要转发链接或确认码。"));
-                        return MarisaPluginTaskState.CompletedTask;
+                            "浏览器授权后会显示一次性确认码，请复制并发送到当前会话。"));
+
+                        stat = 20;
+                        var oauthKey = (message.GroupInfo?.Id, message.Sender.Id);
+                        _ = Task.Delay(TimeSpan.FromMinutes(10)).ContinueWith(_ =>
+                            DialogManager.RemoveDialog(oauthKey));
+
+                        return MarisaPluginTaskState.ToBeContinued;
                     }
 
                     if (idx == 1 && !string.IsNullOrWhiteSpace(ConfigurationManager.Configuration.Lxns.Oauth.ClientId))
@@ -179,6 +176,43 @@ public partial class MaiMaiDx
                         next.Reply($"绑定失败: {e.Message}");
                         return MarisaPluginTaskState.CompletedTask;
                     }
+                }
+                case 20:
+                {
+                    var code = next.Command.Trim().ToString();
+                    if (!Regex.IsMatch(code, "^[0-9A-Fa-f]{32}$"))
+                    {
+                        next.Reply("确认码格式错误，会话已关闭");
+                        return MarisaPluginTaskState.CompletedTask;
+                    }
+
+                    var result = DivingFishBindingConfirmation.Consume(code);
+                    if (!result.IsSuccess)
+                    {
+                        next.Reply("确认码无效或已过期，请重新绑定");
+                        return MarisaPluginTaskState.CompletedTask;
+                    }
+
+                    try
+                    {
+                        var confirmation = result.Entry!;
+                        DivingFishBindingService.Commit(
+                            next.Sender.Id,
+                            confirmation.Sub,
+                            confirmation.Username,
+                            confirmation.Scope,
+                            confirmation.Game);
+                        var account = string.IsNullOrWhiteSpace(confirmation.Username)
+                            ? "已授权账号"
+                            : confirmation.Username;
+                        next.Reply($"DivingFish OAuth 绑定成功！（水鱼账号：{account}）");
+                    }
+                    catch (Exception e)
+                    {
+                        next.Reply($"绑定失败: {e.Message}");
+                    }
+
+                    return MarisaPluginTaskState.CompletedTask;
                 }
             }
 

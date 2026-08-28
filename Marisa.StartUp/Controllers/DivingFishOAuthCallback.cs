@@ -26,8 +26,8 @@ public class DivingFishOAuthCallback : Controller
         if (!acquire.IsAcquired)
         {
             var message = acquire.Status == DivingFishPendingAuth.AcquireStatus.InProgress
-                ? "该授权回调正在处理中，请稍后刷新；若仍未完成，请在群内重新发起绑定。"
-                : "该授权请求已过期、已被使用或已被新的绑定请求替代，请在群内重新发起绑定。";
+                ? "该授权回调正在处理中，请稍后刷新；若仍未完成，请重新发起绑定。"
+                : "该授权请求已过期或已被使用，请重新发起绑定。";
             return Html("回调不可用", message);
         }
 
@@ -35,13 +35,13 @@ public class DivingFishOAuthCallback : Controller
         if (!string.IsNullOrWhiteSpace(error))
         {
             DivingFishPendingAuth.Release(pending);
-            return Html("授权未完成", "水鱼账号授权被取消或拒绝，请返回原群重试或重新发起绑定。");
+            return Html("授权未完成", "水鱼账号授权被取消或拒绝，请返回原会话重试或重新发起绑定。");
         }
 
         if (string.IsNullOrWhiteSpace(code) || code.Length > 4096)
         {
             DivingFishPendingAuth.Release(pending);
-            return Html("无效回调", "缺少有效的授权码，请返回原群重新发起绑定。");
+            return Html("无效回调", "缺少有效的授权码，请返回原会话重新发起绑定。");
         }
 
         string sub;
@@ -58,13 +58,13 @@ public class DivingFishOAuthCallback : Controller
         {
             Logger.Warn("DivingFish OAuth callback exchange failed: {0}", exception.GetType().Name);
             DivingFishPendingAuth.Release(pending);
-            return Html("授权处理失败", "授权未能完成，请返回原群重新发起绑定；若持续失败请联系机器人管理员。");
+            return Html("授权处理失败", "授权未能完成，请返回原会话重新发起绑定；若持续失败请联系机器人管理员。");
         }
 
         var confirmationCode = DivingFishBindingConfirmation.Issue(pending, sub, username, actualScopes);
         if (confirmationCode == null)
         {
-            return Html("授权已失效", "本次请求已被新的绑定请求替代，请返回原群重新发起绑定。");
+            return Html("授权已失效", "本次请求已过期或已被使用，请重新发起绑定。");
         }
 
         var displayName = string.IsNullOrWhiteSpace(username) ? "（未提供展示名）" : username;
@@ -73,10 +73,9 @@ public class DivingFishOAuthCallback : Controller
 <body style=""font-family:sans-serif;max-width:640px;margin:40px auto;line-height:1.8;padding:0 16px""><main>
 <h2>水鱼账号绑定确认</h2>
 <p>网页授权成功。水鱼账号：<b>{EscapeHtml(displayName)}</b></p>
-<p>绑定目标：QQ <b>{pending.Qq}</b>（群 <b>{pending.GroupId}</b>）</p>
-<p>请由上述 QQ 在上述群内发送：</p>
-<p style=""font-size:20px;overflow-wrap:anywhere;background:#f0f0f0;padding:12px;border-radius:6px""><code>水鱼确认 {confirmationCode}</code></p>
-<p style=""color:#b00020""><b>不要把确认码私发给任何人。</b>确认码 5 分钟内有效，仅能提交一次；错误 QQ 或错误群提交也会立即使其失效。</p>
+<p>请回到发起绑定的会话发送以下确认码：</p>
+<p style=""font-size:20px;overflow-wrap:anywhere;background:#f0f0f0;padding:12px;border-radius:6px""><code>{confirmationCode}</code></p>
+<p>确认码 5 分钟内有效，仅能使用一次。</p>
 </main></body></html>";
 
         return Content(html, "text/html; charset=utf-8");

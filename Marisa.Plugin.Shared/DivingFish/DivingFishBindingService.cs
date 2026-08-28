@@ -5,17 +5,11 @@ using Marisa.Database.Entity.Plugin.MaiMaiDx;
 
 namespace Marisa.Plugin.Shared.DivingFish;
 
-public enum DivingFishBindingCommitResult
-{
-    Success,
-    SubjectAlreadyBound
-}
-
 public static class DivingFishBindingService
 {
     internal static readonly object WriteGate = new();
 
-    public static DivingFishBindingCommitResult Commit(
+    public static void Commit(
         long qq,
         string sub,
         string username,
@@ -24,11 +18,11 @@ public static class DivingFishBindingService
     {
         lock (WriteGate)
         {
-            return CommitCore(qq, sub, username, scopes, game);
+            CommitCore(qq, sub, username, scopes, game);
         }
     }
 
-    private static DivingFishBindingCommitResult CommitCore(
+    private static void CommitCore(
         long qq,
         string sub,
         string username,
@@ -48,16 +42,11 @@ public static class DivingFishBindingService
         var subject = DivingFishOAuth.SubjectForSub(sub);
         using var realm = BotDbContext.OpenRealm();
 
-        var allOauthBindings = realm.All<DivingFishOAuthBind>().ToList();
-        if (allOauthBindings.Any(x =>
-                x.Status == DivingFishOAuthBind.VerifiedStatus &&
-                x.Qq != qq &&
-                (x.Sub == sub || x.Subject == subject)))
-        {
-            return DivingFishBindingCommitResult.SubjectAlreadyBound;
-        }
-
-        var sameQq = allOauthBindings.Where(x => x.Qq == qq).OrderByDescending(x => x.VerifiedAt).ToList();
+        var sameQq = realm.All<DivingFishOAuthBind>()
+            .Where(x => x.Qq == qq)
+            .ToList()
+            .OrderByDescending(x => x.VerifiedAt)
+            .ToList();
         var oauthBinding = sameQq.FirstOrDefault();
         var duplicateBindings = sameQq.Skip(1).ToList();
 
@@ -109,7 +98,6 @@ public static class DivingFishBindingService
         });
 
         DivingFishTokenStore.Invalidate(qq);
-        return DivingFishBindingCommitResult.Success;
     }
 
     private static string MergeScopes(string? current, string granted)

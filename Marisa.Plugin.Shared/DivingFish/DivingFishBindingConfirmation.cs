@@ -6,7 +6,7 @@ namespace Marisa.Plugin.Shared.DivingFish;
 
 public static class DivingFishBindingConfirmation
 {
-    private static readonly TimeSpan ConfirmationLifetime = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(1);
 
     private static readonly ConcurrentDictionary<string, ConfirmationEntry> Store = new();
@@ -19,20 +19,14 @@ public static class DivingFishBindingConfirmation
     {
         Success,
         NotFound,
-        Expired,
-        SenderMismatch,
-        GroupMismatch,
-        Superseded
+        Expired
     }
 
     public sealed record ConfirmationEntry(
-        long Qq,
-        long GroupId,
         string Sub,
         string Username,
         string Game,
         string Scope,
-        string Generation,
         DateTimeOffset ExpiresAt);
 
     public readonly record struct ConsumeResult(ConsumeStatus Status, ConfirmationEntry? Entry)
@@ -49,21 +43,16 @@ public static class DivingFishBindingConfirmation
         ArgumentNullException.ThrowIfNull(pending);
         if (string.IsNullOrWhiteSpace(sub)) throw new ArgumentException("水鱼 sub 不能为空", nameof(sub));
         if (string.IsNullOrWhiteSpace(scope)) throw new ArgumentException("scope 不能为空", nameof(scope));
+        if (!DivingFishPendingAuth.TryComplete(pending)) return null;
 
         CleanupExpiredIfDue();
 
-        if (!DivingFishPendingAuth.IsCurrentGeneration(pending.Qq, pending.Generation)) return null;
-
-        var expiresAt = DateTimeOffset.UtcNow.Add(ConfirmationLifetime);
-        var confirmation = new ConfirmationEntry(
-            pending.Qq,
-            pending.GroupId,
+        var entry = new ConfirmationEntry(
             sub,
             username ?? "",
             pending.Game,
             scope,
-            pending.Generation,
-            expiresAt);
+            DateTimeOffset.UtcNow.Add(Lifetime));
 
         string code;
         string codeHash;
@@ -71,41 +60,26 @@ public static class DivingFishBindingConfirmation
         {
             code = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
             codeHash = Sha256Hex(code);
-        } while (!Store.TryAdd(codeHash, confirmation));
-
-        if (!DivingFishPendingAuth.TryComplete(pending, expiresAt) ||
-            !DivingFishPendingAuth.IsCurrentGeneration(confirmation.Qq, confirmation.Generation))
-        {
-            TryRemoveExact(Store, codeHash, confirmation);
-            return null;
-        }
+        } while (!Store.TryAdd(codeHash, entry));
 
         return code;
     }
 
-    public static ConsumeResult Consume(string code, long senderQq, long groupId)
+    public static ConsumeResult Consume(string code)
     {
         if (string.IsNullOrWhiteSpace(code)) return new ConsumeResult(ConsumeStatus.NotFound, null);
 
         var codeHash = Sha256Hex(code.Trim().ToUpperInvariant());
-        if (!Store.TryRemove(codeHash, out var confirmation))
+        if (!Store.TryRemove(codeHash, out var entry))
         {
             CleanupExpiredIfDue();
             return new ConsumeResult(ConsumeStatus.NotFound, null);
         }
 
-        var status = DateTimeOffset.UtcNow >= confirmation.ExpiresAt
-            ? ConsumeStatus.Expired
-            : confirmation.Qq != senderQq
-                ? ConsumeStatus.SenderMismatch
-                : confirmation.GroupId != groupId
-                    ? ConsumeStatus.GroupMismatch
-                    : !DivingFishPendingAuth.IsCurrentGeneration(confirmation.Qq, confirmation.Generation)
-                        ? ConsumeStatus.Superseded
-                        : ConsumeStatus.Success;
-
         CleanupExpiredIfDue();
-        return new ConsumeResult(status, status == ConsumeStatus.Success ? confirmation : null);
+        return DateTimeOffset.UtcNow >= entry.ExpiresAt
+            ? new ConsumeResult(ConsumeStatus.Expired, null)
+            : new ConsumeResult(ConsumeStatus.Success, entry);
     }
 
     private static void CleanupExpiredIfDue()
@@ -135,12 +109,7 @@ public static class DivingFishBindingConfirmation
     {
         foreach (var pair in Store)
         {
-            var confirmation = pair.Value;
-            if (now >= confirmation.ExpiresAt ||
-                !DivingFishPendingAuth.IsCurrentGeneration(confirmation.Qq, confirmation.Generation))
-            {
-                TryRemoveExact(Store, pair.Key, confirmation);
-            }
+            if (now >= pair.Value.ExpiresAt) TryRemoveExact(Store, pair.Key, pair.Value);
         }
     }
 
