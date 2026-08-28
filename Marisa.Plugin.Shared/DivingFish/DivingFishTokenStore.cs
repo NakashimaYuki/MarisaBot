@@ -4,31 +4,19 @@ using Marisa.Database.Entity.Plugin.DivingFish;
 
 namespace Marisa.Plugin.Shared.DivingFish;
 
-/// <summary>
-///     水鱼 OBO access token 缓存。正式绑定只保存 QQ → subject/sub；短期 token 按 (subject, game)
-///     single-flight 换取并缓存，不保存 refresh token，也不允许 username: OBO。
-/// </summary>
 public static class DivingFishTokenStore
 {
     private static readonly ConcurrentDictionary<(string Subject, string Game), DivingFishToken> Cache = new();
     private static readonly ConcurrentDictionary<
         (string Subject, string Game),
         Lazy<Task<DivingFishToken?>>> InFlightFetches = new();
-    // CommitBinding 会在数据库更新后调用 Invalidate。额外保留进程内 QQ → 曾使用 subject 索引，
-    // 这样重绑后的清理仍能找到刚被新 subject 覆盖的旧缓存。
     private static readonly ConcurrentDictionary<long, ConcurrentDictionary<string, byte>> KnownSubjectsByQq = new();
 
-    /// <summary>
-    ///     获取 QQ 对应的短期 token。优先使用 verified subject；若尚无本地绑定，则仅尝试该 QQ 的
-    ///     ref: 存量迁移。ref OBO 成功后必须先把映射持久化，再向调用方返回 token。
-    /// </summary>
     public static async Task<DivingFishToken?> GetValidToken(long qq, string game)
     {
         game = NormalizeGame(game);
         var scope = DivingFishOAuth.ScopeOf(game);
 
-        // 最多重试两次并发重绑。每次远程取票后都重新读取当前绑定，防止 Invalidate 与
-        // in-flight OBO 交错时让旧 subject 的 token 被重新写回并返回给调用方。
         for (var attempt = 0; attempt < 3; attempt++)
         {
             var binding = ReadVerifiedBinding(qq);
@@ -46,13 +34,11 @@ public static class DivingFishTokenStore
                 return token;
             }
 
-            // Developer-Token 迁移只允许由真实 sender QQ 推导 ref，绝不接受群命令中的 username。
             var refSubject = DivingFishOAuth.SubjectForQq(qq);
             RememberSubject(qq, refSubject);
             var migratedToken = await GetOrFetch(refSubject, game);
             if (migratedToken == null)
             {
-                // OBO 期间可能刚完成浏览器确认；此时按新 verified subject 重试。
                 if (ReadVerifiedBinding(qq) != null) continue;
                 return null;
             }
@@ -68,7 +54,6 @@ public static class DivingFishTokenStore
                 throw;
             }
 
-            // 探测 ref 期间若另一个确认事务刚写入 sub: 绑定，不能让旧 ref 覆盖新绑定。
             if (!effectiveSubject.Equals(refSubject, StringComparison.Ordinal) ||
                 !IsCurrentVerifiedSubject(qq, refSubject))
             {
@@ -83,7 +68,6 @@ public static class DivingFishTokenStore
         throw new InvalidOperationException("水鱼绑定在取票期间反复变化，请稍后重试");
     }
 
-    /// <summary>按 QQ 清掉其当前绑定及可推导 ref 的所有游戏缓存；确认重绑前后均可安全调用。</summary>
     public static void Invalidate(long qq)
     {
         var subjects = new HashSet<string>(StringComparer.Ordinal);
@@ -105,21 +89,18 @@ public static class DivingFishTokenStore
         foreach (var subject in subjects) InvalidateSubject(subject);
     }
 
-    /// <summary>兼容现有 401 处理：只清除该 QQ 当前 subject 的指定游戏 token。</summary>
     public static void RemoveToken(long qq, string game)
     {
         game = NormalizeGame(game);
         var binding = ReadVerifiedBinding(qq);
         if (binding != null) Cache.TryRemove((binding.Subject, game), out _);
 
-        // 尚未持久化完成的 ref migration 也可能已有缓存。
         if (DivingFishOAuth.IsConfigured)
         {
             Cache.TryRemove((DivingFishOAuth.SubjectForQq(qq), game), out _);
         }
     }
 
-    /// <summary>本地解绑：事务删除该 QQ 的所有映射并清除相关缓存。</summary>
     public static void RemoveBinding(long qq)
     {
         Invalidate(qq);
@@ -179,7 +160,6 @@ public static class DivingFishTokenStore
         (string Subject, string Game) key,
         DivingFishToken token)
     {
-        // OBO 票正常只有五分钟。即使上游误报了极长 expires_in，也不让票在内存缓存超过十分钟。
         var evictionAt = token.ExpiresAt < DateTime.UtcNow.AddMinutes(10)
             ? token.ExpiresAt
             : DateTime.UtcNow.AddMinutes(10);
@@ -214,7 +194,6 @@ public static class DivingFishTokenStore
         var subject = ResolveStoredSubject(bind, true);
         if (subject == null) return null;
 
-        // 兼容本分支旧 schema：已有 Sub 但还没有 Subject 时，首次读取即回填 sub: subject。
         if (string.IsNullOrWhiteSpace(bind.Subject))
         {
             realm.Write(() => bind.Subject = subject);
@@ -229,10 +208,6 @@ public static class DivingFishTokenStore
         return current != null && current.Subject.Equals(expectedSubject, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    ///     ref OBO 成功后原子持久化。若并发确认已经写入另一个 verified subject，返回新 subject，
-    ///     调用方必须丢弃 ref token 并按新 subject 重新取票。
-    /// </summary>
     private static string PersistMigratedBinding(long qq, string refSubject, string scope)
     {
         lock (DivingFishBindingService.WriteGate)

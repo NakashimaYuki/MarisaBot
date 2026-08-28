@@ -4,16 +4,12 @@ using NLog;
 
 namespace Marisa.StartUp.Controllers;
 
-/// <summary>
-///     OAuth callback. A successful callback only stages an identity proof; the binding
-///     is committed after the original QQ submits that proof in the original group.
-/// </summary>
 [ApiController]
 public class DivingFishOAuthCallback : Controller
 {
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
-    [HttpGet("/oauth/callback")]
+    [HttpGet("/oauth/callback/divingfish")]
     public async Task<IActionResult> Callback(
         [FromQuery] string? code,
         [FromQuery] string? state,
@@ -21,8 +17,6 @@ public class DivingFishOAuthCallback : Controller
     {
         SetSecurityHeaders();
 
-        // An OAuth error callback is still correlated with a pending request. Never act on
-        // an unauthenticated error parameter before validating state.
         if (string.IsNullOrWhiteSpace(state) || state.Length > 256)
         {
             return Html("无效回调", "缺少有效的 state 参数。");
@@ -62,15 +56,13 @@ public class DivingFishOAuthCallback : Controller
         }
         catch (Exception exception)
         {
-            // Do not log the exception object: transport exceptions may retain the token
-            // request body (authorization code / client secret).
             Logger.Warn("DivingFish OAuth callback exchange failed: {0}", exception.GetType().Name);
             DivingFishPendingAuth.Release(pending);
             return Html("授权处理失败", "授权未能完成，请返回原群重新发起绑定；若持续失败请联系机器人管理员。");
         }
 
-        var proofCode = DivingFishBindingProof.Issue(pending, sub, username, actualScopes);
-        if (proofCode == null)
+        var confirmationCode = DivingFishBindingConfirmation.Issue(pending, sub, username, actualScopes);
+        if (confirmationCode == null)
         {
             return Html("授权已失效", "本次请求已被新的绑定请求替代，请返回原群重新发起绑定。");
         }
@@ -83,7 +75,7 @@ public class DivingFishOAuthCallback : Controller
 <p>网页授权成功。水鱼账号：<b>{EscapeHtml(displayName)}</b></p>
 <p>绑定目标：QQ <b>{pending.Qq}</b>（群 <b>{pending.GroupId}</b>）</p>
 <p>请由上述 QQ 在上述群内发送：</p>
-<p style=""font-size:20px;overflow-wrap:anywhere;background:#f0f0f0;padding:12px;border-radius:6px""><code>水鱼确认 {proofCode}</code></p>
+<p style=""font-size:20px;overflow-wrap:anywhere;background:#f0f0f0;padding:12px;border-radius:6px""><code>水鱼确认 {confirmationCode}</code></p>
 <p style=""color:#b00020""><b>不要把确认码私发给任何人。</b>确认码 5 分钟内有效，仅能提交一次；错误 QQ 或错误群提交也会立即使其失效。</p>
 </main></body></html>";
 

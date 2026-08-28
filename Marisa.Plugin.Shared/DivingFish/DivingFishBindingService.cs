@@ -11,15 +11,8 @@ public enum DivingFishBindingCommitResult
     SubjectAlreadyBound
 }
 
-/// <summary>
-///     Commits the verified OAuth identity and the selected game provider in one Realm
-///     transaction. The caller must have consumed a valid one-time proof first.
-/// </summary>
 public static class DivingFishBindingService
 {
-    // Browser confirmation and automatic ref migration must share this process-local write
-    // boundary. Otherwise a stale ref migration can be committed just after a newer sub:
-    // confirmation and become the row selected by VerifiedAt ordering.
     internal static readonly object WriteGate = new();
 
     public static DivingFishBindingCommitResult Commit(
@@ -29,8 +22,6 @@ public static class DivingFishBindingService
         string scopes,
         string game)
     {
-        // Confirmation messages are ordered at ingress, and this gate also makes direct
-        // callers share the same one-to-one uniqueness boundary inside this process.
         lock (WriteGate)
         {
             return CommitCore(qq, sub, username, scopes, game);
@@ -51,14 +42,12 @@ public static class DivingFishBindingService
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (!grantedScopes.Contains(requiredScope, StringComparer.Ordinal))
         {
-            throw new ArgumentException("proof does not contain the required game scope", nameof(scopes));
+            throw new ArgumentException("confirmation does not contain the required game scope", nameof(scopes));
         }
 
         var subject = DivingFishOAuth.SubjectForSub(sub);
         using var realm = BotDbContext.OpenRealm();
 
-        // Realm's [Indexed] attribute is not a uniqueness constraint. Enforce the
-        // one-waterfish-account-to-one-QQ invariant before entering the write transaction.
         var allOauthBindings = realm.All<DivingFishOAuthBind>().ToList();
         if (allOauthBindings.Any(x =>
                 x.Status == DivingFishOAuthBind.VerifiedStatus &&

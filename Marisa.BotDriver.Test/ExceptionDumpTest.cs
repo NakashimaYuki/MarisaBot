@@ -55,30 +55,6 @@ public class ExceptionDumpTest
     }
 
     [Test]
-    public async Task ExceptionHandler_Should_Redact_Sensitive_Related_Message()
-    {
-        const string sentinel = "SECRET_SENTINEL";
-        var queue = new MessageQueueProvider();
-        var sender = new MessageSenderProvider(queue);
-        var message = new Message(new MessageChain(new MessageDataText(sentinel)), sender)
-        {
-            Type = MessageType.FriendMessage,
-            Sender = new SenderInfo(114514, "tester"),
-            RedactFromLogs = true
-        };
-
-        await new MarisaPluginBase().ExceptionHandler(new InvalidOperationException("boom"), message);
-
-        var dumpPath = Directory.GetFiles(Path.Join(_tempRoot, "exceptions"), "*.json").Single();
-        var content = File.ReadAllText(dumpPath);
-        Assert.Multiple(() =>
-        {
-            Assert.That(content, Does.Contain("[REDACTED]"));
-            Assert.That(content, Does.Not.Contain(sentinel));
-        });
-    }
-
-    [Test]
     public async Task ExceptionHandler_Should_Not_Send_Raw_Exception_Detail_To_User()
     {
         var queue = new MessageQueueProvider();

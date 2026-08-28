@@ -4,10 +4,6 @@ using System.Text;
 
 namespace Marisa.Plugin.Shared.DivingFish;
 
-/// <summary>
-///     授权码流程的进程内待确认状态。
-///     每个 QQ 同时只有最新一代绑定有效；新绑定会使该 QQ 在任意群、任意游戏的旧 state / proof 失效。
-/// </summary>
 public static class DivingFishPendingAuth
 {
     private static readonly TimeSpan PendingLifetime = TimeSpan.FromMinutes(10);
@@ -39,10 +35,6 @@ public static class DivingFishPendingAuth
         string Generation,
         DateTimeOffset ExpiresAt);
 
-    /// <summary>
-    ///     callback 对 state 的独占租约。换码成功后交给 BindingProof.Issue；
-    ///     换码失败时调用 Release，使合法 callback 能重试。
-    /// </summary>
     public sealed class PendingEntry
     {
         internal PendingEntry(
@@ -98,10 +90,6 @@ public static class DivingFishPendingAuth
 
     private sealed record LatestGeneration(string Generation, string State, DateTimeOffset ExpiresAt);
 
-    /// <summary>
-    ///     开始一代新的绑定。state 与 PKCE verifier 为 256-bit、generation 为 128-bit CSPRNG 随机值。
-    ///     该调用的线性化点会立即 supersede 同一 QQ 的任意旧绑定流程。
-    /// </summary>
     public static PendingStart Begin(long qq, long groupId, string game)
     {
         if (qq <= 0) throw new ArgumentOutOfRangeException(nameof(qq));
@@ -131,7 +119,6 @@ public static class DivingFishPendingAuth
             var latest = new LatestGeneration(generation, state, now.Add(GenerationLifetime));
             if (LatestByQq.TryGetValue(qq, out var previous))
             {
-                // state 使用高熵随机值且永不复用，按 key 删除不会误删新一代。
                 Store.TryRemove(previous.State, out _);
             }
 
@@ -141,9 +128,6 @@ public static class DivingFishPendingAuth
         return new PendingStart(state, codeVerifier, codeChallenge, generation, expiresAt);
     }
 
-    /// <summary>
-    ///     原子占用一个 state。并发 callback 最多只有一个能取得 PendingEntry。
-    /// </summary>
     public static AcquireResult AcquireForCallback(string state)
     {
         if (string.IsNullOrWhiteSpace(state)) return new AcquireResult(AcquireStatus.NotFound, null);
@@ -190,9 +174,6 @@ public static class DivingFishPendingAuth
         return new AcquireResult(AcquireStatus.NotFound, null);
     }
 
-    /// <summary>
-    ///     换码失败后释放租约。只会释放调用者持有且仍属于最新一代的租约。
-    /// </summary>
     public static bool Release(PendingEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
@@ -215,7 +196,6 @@ public static class DivingFishPendingAuth
         return false;
     }
 
-    /// <summary>检查 generation 是否仍是该 QQ 的最新一代。</summary>
     public static bool IsCurrentGeneration(long qq, string generation)
     {
         if (qq <= 0 || string.IsNullOrWhiteSpace(generation)) return false;
@@ -229,10 +209,7 @@ public static class DivingFishPendingAuth
         return false;
     }
 
-    /// <summary>
-    ///     proof 签发时完成 callback state，并把最新代的保留时间延长到 proof 到期。
-    /// </summary>
-    internal static bool TryComplete(PendingEntry entry, DateTimeOffset proofExpiresAt)
+    internal static bool TryComplete(PendingEntry entry, DateTimeOffset confirmationExpiresAt)
     {
         ArgumentNullException.ThrowIfNull(entry);
         CleanupExpiredIfDue();
@@ -244,7 +221,7 @@ public static class DivingFishPendingAuth
             return false;
         }
 
-        if (!TryExtendCurrentGeneration(current.Qq, current.Generation, proofExpiresAt))
+        if (!TryExtendCurrentGeneration(current.Qq, current.Generation, confirmationExpiresAt))
         {
             TryRemoveExact(Store, entry.State, current);
             return false;
@@ -252,7 +229,6 @@ public static class DivingFishPendingAuth
 
         if (!TryRemoveExact(Store, entry.State, current)) return false;
 
-        // Begin 可能在上面的两个字典操作之间 supersede 本代；最终再检查一次。
         return IsCurrentGeneration(current.Qq, current.Generation);
     }
 
@@ -297,14 +273,11 @@ public static class DivingFishPendingAuth
         }
         catch
         {
-            // Timer callback 中的异常不能逃逸并终止进程；下次操作仍会再次清理。
         }
     }
 
     private static void CleanupExpired(DateTimeOffset now)
     {
-        // Begin 先加入 Store、再切换 LatestByQq；清理与 Begin 共用此锁，避免把尚未发布的新 state
-        // 误判为 superseded 并删除。callback 的无锁读仍由 ConcurrentDictionary 保证安全。
         lock (GenerationGate)
         {
             foreach (var pair in LatestByQq)

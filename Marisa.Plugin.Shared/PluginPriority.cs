@@ -2,8 +2,6 @@
 
 public static class PluginPriority
 {
-    // Confirmation codes must be consumed even when the sender is blacklisted. Otherwise
-    // BlackList can swallow a wrong-sender attempt before the one-time proof is burned.
     public const int DivingFishConfirmation = 12;
     public const int BlackList = 11;
     public const int WordCloud = 10;

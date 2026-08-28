@@ -7,10 +7,6 @@ using Marisa.Configuration;
 
 namespace Marisa.Plugin.Shared.DivingFish;
 
-/// <summary>
-///     水鱼账号 OAuth：授权码 + PKCE 用于确认用户身份，服务端日常访问使用 on-behalf-of 换取短期令牌。
-///     不持久化用户 refresh token；正式绑定只保存应用侧 QQ 与水鱼 subject/sub 的映射。
-/// </summary>
 public static class DivingFishOAuth
 {
     private const string AuthBaseUrl = "https://auth.diving-fish.com";
@@ -25,14 +21,11 @@ public static class DivingFishOAuth
     private static string ClientSecret => ConfigurationManager.Configuration.DivingFish.ClientSecret ?? "";
     private static string RedirectUri => ConfigurationManager.Configuration.DivingFish.RedirectUri ?? "";
 
-    /// <summary>已配置机密客户端凭据，可执行 OBO；不要求本实例承接浏览器回调。</summary>
     public static bool IsConfigured =>
         !string.IsNullOrWhiteSpace(ClientId) && !string.IsNullOrWhiteSpace(ClientSecret);
 
-    /// <summary>除客户端凭据外还配置了安全的回调地址，可发起授权码流程。</summary>
     public static bool CanAuthorize => IsConfigured && IsAllowedRedirectUri(RedirectUri);
 
-    /// <summary>scope 按游戏区分：maimai / chunithm。</summary>
     public static string ScopeOf(string game)
     {
         if (string.Equals(game, "maimai", StringComparison.OrdinalIgnoreCase)) return "prober.records.read";
@@ -40,13 +33,11 @@ public static class DivingFishOAuth
         throw new ArgumentOutOfRangeException(nameof(game), game, "仅支持 maimai 或 chunithm");
     }
 
-    /// <summary>授权码流程所需的完整 scope；profile 用于从 userinfo 取得可展示的账号名。</summary>
     public static string AuthorizationScopeOf(string game)
     {
         return $"openid profile {ScopeOf(game)}";
     }
 
-    /// <summary>构造授权码链接。调用方必须另外保存并验证 state 与 verifier。</summary>
     public static async Task<string> BuildAuthorizeUrl(string state, string codeChallenge, string game)
     {
         if (!CanAuthorize)
@@ -69,10 +60,6 @@ public static class DivingFishOAuth
         return $"{endpoints.AuthorizationEndpoint}?{query}";
     }
 
-    /// <summary>
-    ///     以授权码 + PKCE 换票，严格检查 Bearer token 与本次请求的 scope，随后只信任 userinfo 返回的 sub。
-    ///     返回的 access token 仅供完成本次身份确认；长期访问应使用 <see cref="FetchToken"/> OBO 换票。
-    /// </summary>
     public static async Task<(DivingFishToken Token, string Sub, string Username)> ExchangeAuthCode(
         string code,
         string verifier,
@@ -107,7 +94,6 @@ public static class DivingFishOAuth
         return (token, sub, username);
     }
 
-    /// <summary>通过 userinfo 获取可信的 sub 与展示名；不会解析或信任未验签的 JWT payload。</summary>
     public static async Task<(string Sub, string Username)> FetchUserInfo(string accessToken)
     {
         var endpoints = await GetEndpoints();
@@ -165,10 +151,6 @@ public static class DivingFishOAuth
         }
     }
 
-    /// <summary>
-    ///     以应用凭据和已确认的 ref:/sub: subject 换取五分钟 access token。
-    ///     username: 明确禁止，避免群命令中的任意用户名绕过本地 QQ 绑定。
-    /// </summary>
     public static async Task<DivingFishToken> FetchToken(string subject, string game)
     {
         EnsureClientCredentials();
@@ -212,21 +194,18 @@ public static class DivingFishOAuth
         return ParseTokenResponse(body, ScopeOf(game), "换票");
     }
 
-    /// <summary>迁移 Developer-Token 存量用户时使用的 ref: subject。</summary>
     public static string SubjectForQq(long qq)
     {
         if (qq <= 0) throw new ArgumentOutOfRangeException(nameof(qq), qq, "QQ 必须为正整数");
         return "ref:" + SubjectRef(qq.ToString(CultureInfo.InvariantCulture));
     }
 
-    /// <summary>把可信 userinfo sub 转为 OBO subject。</summary>
     public static string SubjectForSub(string sub)
     {
         if (!IsValidSub(sub)) throw new ArgumentException("水鱼 sub 格式无效", nameof(sub));
         return "sub:" + sub;
     }
 
-    /// <summary>sha256($"{clientId}:{externalId}")，与水鱼存量迁移算法保持一致。</summary>
     public static string SubjectRef(string externalId)
     {
         EnsureClientCredentials();
@@ -252,10 +231,6 @@ public static class DivingFishOAuth
         return subject.StartsWith("sub:", StringComparison.Ordinal) && IsValidSub(subject[4..]);
     }
 
-    /// <summary>
-    ///     水鱼要求除授权服务器根地址外的端点都从 OIDC discovery 读取。成功结果缓存一小时；
-    ///     失败不会污染缓存，下一次请求仍可重试。
-    /// </summary>
     private static async Task<OAuthEndpoints> GetEndpoints()
     {
         var now = DateTimeOffset.UtcNow;
@@ -464,7 +439,7 @@ public static class DivingFishOAuth
     private static bool IsAllowedRedirectUri(string redirectUri)
     {
         if (!Uri.TryCreate(redirectUri, UriKind.Absolute, out var uri)) return false;
-        if (!uri.AbsolutePath.Equals("/oauth/callback", StringComparison.Ordinal) || !string.IsNullOrEmpty(uri.Fragment))
+        if (!uri.AbsolutePath.Equals("/oauth/callback/divingfish", StringComparison.Ordinal) || !string.IsNullOrEmpty(uri.Fragment))
         {
             return false;
         }
@@ -498,7 +473,6 @@ public sealed class DivingFishToken
 
 }
 
-/// <summary>目标用户未授权应用，或尚未授予本次请求所需的 scope。</summary>
 public sealed class DivingFishNotBoundException : Exception
 {
 }

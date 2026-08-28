@@ -39,10 +39,6 @@ public static class ProberError
         };
     }
 
-    /// <summary>
-    ///     水鱼 Bearer 资源端点的错误语义与旧 Developer-Token 端点不同：
-    ///     401 是 access token 失效，403 是 scope 不足或用户协议问题，不能按“未绑定/隐私”处理。
-    /// </summary>
     public static string DivingFishOAuth(int statusCode, string body, string prober = "水鱼")
     {
         var detail = ReadStringField(body, "message")

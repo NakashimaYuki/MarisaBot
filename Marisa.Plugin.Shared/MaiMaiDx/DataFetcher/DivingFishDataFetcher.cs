@@ -14,8 +14,6 @@ public class DivingFishDataFetcher : DataFetcher
     public const int OldScoreLimit = 35;
     public const int NewScoreLimit = 15;
 
-    // b35 会先 GetRating、再用同一个 Message GetScores。用户名/@他人的公开查询成功后，
-    // 后一步绝不能因为 GetScores 的 qqOnly 语义而退回发送者 Bearer token。
     private readonly ConditionalWeakTable<Message, object> _publicOtherQueries = new();
 
     protected virtual bool OAuthEnabled => DivingFishOAuth.IsConfigured;
@@ -29,11 +27,8 @@ public class DivingFishDataFetcher : DataFetcher
         var (username, qq) = Chunithm.DataFetcher.DataFetcher.AtOrSelf(message, false);
         var isSelf = username.IsWhiteSpace() && qq == message.Sender.Id;
 
-        // OAuth 模式：查 b50
         if (OAuthEnabled)
         {
-            // 1. 优先走公开 /query/player（JSON，无需验证、不耗配额、服务端已截好 b50）
-            //    qq 或 username 都能查；只有严格“查自己”时，400/403 才能回落 OAuth。
             try
             {
                 var rating = username.IsWhiteSpace()
@@ -49,25 +44,17 @@ public class DivingFishDataFetcher : DataFetcher
             }
             catch (HttpRequestException e) when (e.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Forbidden)
             {
-                // Bearer 查询对象由 token 决定。用户名或 @ 他人的查询绝不能拿发送者或目标的 token 回落。
                 if (!isSelf) throw;
 
-                // 2. 严格查自己：Bearer /player/records 全量 + 本地分组截取 b35+b15
                 return ToDxRating(await FetchScores(message, false));
             }
         }
 
-        // DevToken 模式（废弃端点，过渡期兼容）：全量本地截取
         return ToDxRating(await FetchScores(message, false));
     }
 
-    /// <summary>
-    ///     把成绩记录按新旧分组，旧取 35（b35）、新取 15（b15）
-    /// </summary>
     private DxRating ToDxRating(DivingFishDxRatingResponse raw)
     {
-        // /query/player already returns the server-authoritative b35/b15 split. Preserve it
-        // instead of flattening and reclassifying with a possibly stale local song database.
         if (raw.PublicOldScores != null && raw.PublicNewScores != null)
         {
             return new DxRating
@@ -126,7 +113,6 @@ public class DivingFishDataFetcher : DataFetcher
 
     public override async Task<(string? Nickname, Dictionary<int, SongScore> Scores)> GetSongScore(Message message, MaiMaiSong song)
     {
-        // OAuth 模式：查询对象由 token 决定，body 只带 music_id；DevToken 模式：附带 qq/username
         var (username, qq) = Chunithm.DataFetcher.DataFetcher.AtOrSelf(message, true);
         var isSelf = username.IsWhiteSpace() && qq == message.Sender.Id;
 
@@ -182,9 +168,6 @@ public class DivingFishDataFetcher : DataFetcher
         return (null, scores);
     }
 
-    /// <summary>
-    ///     公开端点 /query/player：按用户名查 b50（JSON，无需验证，用户隐私决定可否查询）
-    /// </summary>
     protected virtual async Task<DivingFishDxRatingResponse> FetchScoresByUsername(ReadOnlyMemory<char> username)
     {
         var response = await "https://www.diving-fish.com/api/maimaidxprober/query/player"
@@ -205,9 +188,6 @@ public class DivingFishDataFetcher : DataFetcher
         return ToFullResponse(await response.GetJsonAsync<DivingFishDxPublicResponse>());
     }
 
-    /// <summary>
-    ///     公开端点 /query/player：按 QQ 号查 b50（JSON，无需验证，用户隐私决定可否查询）
-    /// </summary>
     protected virtual async Task<DivingFishDxRatingResponse> FetchScoresByQq(long qq)
     {
         var response = await "https://www.diving-fish.com/api/maimaidxprober/query/player"
@@ -242,7 +222,6 @@ public class DivingFishDataFetcher : DataFetcher
     {
         var (username, qq) = Chunithm.DataFetcher.DataFetcher.AtOrSelf(message, qqOnly);
 
-        // OAuth 模式：查询对象由 token 决定，URL 不带 qq/username
         if (OAuthEnabled)
         {
             var isSelf = username.IsWhiteSpace() && qq == message.Sender.Id;
@@ -267,7 +246,6 @@ public class DivingFishDataFetcher : DataFetcher
             return await response.GetJsonAsync<DivingFishDxRatingResponse>();
         }
 
-        // DevToken 模式（废弃端点，过渡期兼容）
         var uri = username.IsWhiteSpace()
             ? $"https://www.diving-fish.com/api/maimaidxprober/dev/player/records?qq={qq}"
             : $"https://www.diving-fish.com/api/maimaidxprober/dev/player/records?username={username}";
@@ -287,10 +265,6 @@ public class DivingFishDataFetcher : DataFetcher
         return await devResponse.GetJsonAsync<DivingFishDxRatingResponse>();
     }
 
-    /// <summary>
-    ///     获取严格属于消息发送者的 OAuth token。
-    ///     调用方必须先确认请求没有用户名或 @ 他人选择器。
-    /// </summary>
     private static async Task<string> GetRequiredToken(Message message, string game)
     {
         var token = (await DivingFishTokenStore.GetValidToken(message.Sender.Id, game))?.AccessToken;
@@ -298,10 +272,6 @@ public class DivingFishDataFetcher : DataFetcher
         throw new HttpRequestException("未绑定水鱼查分器，请先使用 bind 命令完成绑定后再查询");
     }
 
-    /// <summary>
-    ///     资源端点返回 401 时，清除 access-token 缓存并重新换票后至多重试一次。
-    ///     读取类 GET/POST 都是幂等操作，因此一次重试不会产生重复写入。
-    /// </summary>
     private static async Task<IFlurlResponse> SendBearerWithOneRetry(
         Message message,
         string game,

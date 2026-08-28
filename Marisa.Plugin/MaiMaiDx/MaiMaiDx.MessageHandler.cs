@@ -80,8 +80,6 @@ public partial class MaiMaiDx
                         return MarisaPluginTaskState.CompletedTask;
                     }
 
-                    // DivingFish OAuth：已有 consent 时 OBO 可直接换票；否则发起
-                    // authorization-code + PKCE，最终由全局确认处理器提交绑定。
                     if (idx == 0 && DivingFishOAuth.IsConfigured)
                     {
                         if (next.Type != MessageType.GroupMessage || next.GroupInfo == null)
@@ -716,8 +714,6 @@ public partial class MaiMaiDx
         }
         catch (NotSupportedException exception)
         {
-            // 公开 b50 只保证旧曲 35 + 新曲 15，无法据此还原跨版本的精确全局 b35。
-            // 不能静默生成一个看似有效但可能漏掉新曲第 16 名之后记录的结果。
             message.Reply(exception.Message);
             return MarisaPluginTaskState.CompletedTask;
         }

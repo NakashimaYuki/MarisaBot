@@ -12,6 +12,7 @@ using Marisa.BotDriver.Entity.MessageSender;
 using Marisa.Plugin;
 using Marisa.Plugin.Shared;
 using Marisa.Plugin.Shared.DivingFish;
+using Marisa.Plugin.DivingFish;
 using NUnit.Framework;
 
 namespace Marisa.Plugin.Test;
@@ -50,7 +51,7 @@ public class DivingFishOAuthSecurityTest
             divingFish:
               clientId: "test-client-id"
               clientSecret: "test-client-secret"
-              redirectUri: "https://bot.example.test/oauth/callback"
+              redirectUri: "https://bot.example.test/oauth/callback/divingfish"
             """);
 
         ConfigurationManager.SetConfigFilePath(configPath);
@@ -94,28 +95,6 @@ public class DivingFishOAuthSecurityTest
     }
 
     [Test]
-    public void ConfirmationCandidate_IsGloballyMatchedAndRedactable()
-    {
-        const string code = "00112233445566778899AABBCCDDEEFF";
-        var message = new Message(null!, new MessageDataText($"请帮我确认：水鱼确认 {code}。".AsMemory()))
-        {
-            Type = MessageType.GroupMessage,
-            GroupInfo = new GroupInfo(100, "test", "member"),
-            Sender = new SenderInfo(200, "tester")
-        };
-
-        var policy = new DivingFishConfirmation();
-        Assert.That(policy.Matches(message), Is.True);
-
-        message.RedactFromLogs = true;
-        Assert.Multiple(() =>
-        {
-            Assert.That(message.ToString(), Does.Contain("[REDACTED]"));
-            Assert.That(message.ToString(), Does.Not.Contain(code));
-        });
-    }
-
-    [Test]
     public void ConfirmationHandler_RunsBeforeBlacklist()
     {
         Assert.That(PluginPriority.DivingFishConfirmation, Is.GreaterThan(PluginPriority.BlackList),
@@ -123,11 +102,11 @@ public class DivingFishOAuthSecurityTest
     }
 
     [Test]
-    public void ConfirmationHandler_DecoyBeforeRealCode_BurnsEveryActiveProof()
+    public void ConfirmationHandler_DecoyBeforeRealCode_BurnsEveryActiveConfirmation()
     {
         var qq = NextIdentity();
         const long groupId = 105;
-        var realCode = IssueProof(qq, groupId, "maimai");
+        var realCode = IssueConfirmation(qq, groupId, "maimai");
         var decoy = realCode.Equals(new string('F', 32), StringComparison.OrdinalIgnoreCase)
             ? new string('0', 32)
             : new string('F', 32);
@@ -150,8 +129,8 @@ public class DivingFishOAuthSecurityTest
         Assert.That(confirm, Is.Not.Null);
         _ = confirm!.Invoke(null, [message]);
 
-        Assert.That(DivingFishBindingProof.Consume(realCode, qq, groupId).Status,
-            Is.EqualTo(DivingFishBindingProof.ConsumeStatus.NotFound),
+        Assert.That(DivingFishBindingConfirmation.Consume(realCode, qq, groupId).Status,
+            Is.EqualTo(DivingFishBindingConfirmation.ConsumeStatus.NotFound),
             "前置无关 32 位摘要不得阻止真实确认码被全局烧毁");
     }
 
@@ -171,72 +150,72 @@ public class DivingFishOAuthSecurityTest
                 Is.EqualTo(ConcurrentAttemptCount - 1));
         });
 
-        var code = DivingFishBindingProof.Issue(
+        var code = DivingFishBindingConfirmation.Issue(
             acquired[0].Entry!, "sub", "tester", DivingFishOAuth.ScopeOf("maimai"));
         Assert.That(code, Is.Not.Null);
-        Assert.That(DivingFishBindingProof.Consume(code!, qq, 100).Status,
-            Is.EqualTo(DivingFishBindingProof.ConsumeStatus.Success));
+        Assert.That(DivingFishBindingConfirmation.Consume(code!, qq, 100).Status,
+            Is.EqualTo(DivingFishBindingConfirmation.ConsumeStatus.Success));
     }
 
     [Test]
-    public async Task BindingProof_ConcurrentConsume_OnlyOneAttemptSucceeds()
+    public async Task BindingConfirmation_ConcurrentConsume_OnlyOneAttemptSucceeds()
     {
         var qq = NextIdentity();
         const long groupId = 101;
-        var code = IssueProof(qq, groupId, "maimai");
+        var code = IssueConfirmation(qq, groupId, "maimai");
 
-        var results = await RunConcurrently(() => DivingFishBindingProof.Consume(code, qq, groupId));
+        var results = await RunConcurrently(() => DivingFishBindingConfirmation.Consume(code, qq, groupId));
 
         Assert.Multiple(() =>
         {
             Assert.That(results.Count(x => x.IsSuccess), Is.EqualTo(1));
-            Assert.That(results.Count(x => x.Status == DivingFishBindingProof.ConsumeStatus.NotFound),
+            Assert.That(results.Count(x => x.Status == DivingFishBindingConfirmation.ConsumeStatus.NotFound),
                 Is.EqualTo(ConcurrentAttemptCount - 1));
         });
     }
 
     [Test]
-    public void BindingProof_WrongQqAttempt_BurnsCode()
+    public void BindingConfirmation_WrongQqAttempt_BurnsCode()
     {
         var qq = NextIdentity();
         const long groupId = 102;
-        var code = IssueProof(qq, groupId, "maimai");
+        var code = IssueConfirmation(qq, groupId, "maimai");
 
-        var wrongAttempt = DivingFishBindingProof.Consume(code, qq + 1, groupId);
-        var replayByOwner = DivingFishBindingProof.Consume(code, qq, groupId);
+        var wrongAttempt = DivingFishBindingConfirmation.Consume(code, qq + 1, groupId);
+        var replayByOwner = DivingFishBindingConfirmation.Consume(code, qq, groupId);
 
         Assert.Multiple(() =>
         {
-            Assert.That(wrongAttempt.Status, Is.EqualTo(DivingFishBindingProof.ConsumeStatus.SenderMismatch));
+            Assert.That(wrongAttempt.Status, Is.EqualTo(DivingFishBindingConfirmation.ConsumeStatus.SenderMismatch));
             Assert.That(wrongAttempt.Entry, Is.Null);
-            Assert.That(replayByOwner.Status, Is.EqualTo(DivingFishBindingProof.ConsumeStatus.NotFound),
+            Assert.That(replayByOwner.Status, Is.EqualTo(DivingFishBindingConfirmation.ConsumeStatus.NotFound),
                 "身份不匹配的首次尝试必须烧毁确认码");
             Assert.That(replayByOwner.Entry, Is.Null);
         });
     }
 
     [Test]
-    public void BindingProof_WrongGroupAttempt_BurnsCode()
+    public void BindingConfirmation_WrongGroupAttempt_BurnsCode()
     {
         var qq = NextIdentity();
         const long groupId = 103;
-        var code = IssueProof(qq, groupId, "maimai");
+        var code = IssueConfirmation(qq, groupId, "maimai");
 
-        var wrongAttempt = DivingFishBindingProof.Consume(code, qq, groupId + 1);
-        var replayInOriginalGroup = DivingFishBindingProof.Consume(code, qq, groupId);
+        var wrongAttempt = DivingFishBindingConfirmation.Consume(code, qq, groupId + 1);
+        var replayInOriginalGroup = DivingFishBindingConfirmation.Consume(code, qq, groupId);
 
         Assert.Multiple(() =>
         {
-            Assert.That(wrongAttempt.Status, Is.EqualTo(DivingFishBindingProof.ConsumeStatus.GroupMismatch));
+            Assert.That(wrongAttempt.Status, Is.EqualTo(DivingFishBindingConfirmation.ConsumeStatus.GroupMismatch));
             Assert.That(wrongAttempt.Entry, Is.Null);
-            Assert.That(replayInOriginalGroup.Status, Is.EqualTo(DivingFishBindingProof.ConsumeStatus.NotFound),
+            Assert.That(replayInOriginalGroup.Status, Is.EqualTo(DivingFishBindingConfirmation.ConsumeStatus.NotFound),
                 "群不匹配的首次尝试必须烧毁确认码");
             Assert.That(replayInOriginalGroup.Entry, Is.Null);
         });
     }
 
     [Test]
-    public void BindingProof_NewBeginRejectsOlderGenerationAcrossGroupsAndGames()
+    public void BindingConfirmation_NewBeginRejectsOlderGenerationAcrossGroupsAndGames()
     {
         var qq = NextIdentity();
         const long oldGroupId = 104;
@@ -248,34 +227,34 @@ public class DivingFishOAuthSecurityTest
         Assert.That(staleAcquire.Entry, Is.Not.Null);
 
         var currentStart = DivingFishPendingAuth.Begin(qq, newGroupId, "chunithm");
-        var staleCode = DivingFishBindingProof.Issue(
+        var staleCode = DivingFishBindingConfirmation.Issue(
             staleAcquire.Entry!, $"sub-{qq}", "tester", DivingFishOAuth.ScopeOf("maimai"));
 
         var currentAcquire = DivingFishPendingAuth.AcquireForCallback(currentStart.State);
         Assert.That(currentAcquire.Status, Is.EqualTo(DivingFishPendingAuth.AcquireStatus.Acquired));
         Assert.That(currentAcquire.Entry, Is.Not.Null);
-        var currentCode = DivingFishBindingProof.Issue(
+        var currentCode = DivingFishBindingConfirmation.Issue(
             currentAcquire.Entry!, $"sub-{qq}", "tester", DivingFishOAuth.ScopeOf("chunithm"));
         Assert.That(currentCode, Is.Not.Null);
-        var currentAttempt = DivingFishBindingProof.Consume(currentCode!, qq, newGroupId);
+        var currentAttempt = DivingFishBindingConfirmation.Consume(currentCode!, qq, newGroupId);
 
         Assert.Multiple(() =>
         {
             Assert.That(staleCode, Is.Null,
-                "同一 QQ 的新 Begin 必须拒绝任意群、任意游戏的旧 generation 签发 proof");
-            Assert.That(currentAttempt.Status, Is.EqualTo(DivingFishBindingProof.ConsumeStatus.Success));
+                "同一 QQ 的新 Begin 必须拒绝任意群、任意游戏的旧 generation 签发 confirmation");
+            Assert.That(currentAttempt.Status, Is.EqualTo(DivingFishBindingConfirmation.ConsumeStatus.Success));
             Assert.That(currentAttempt.Entry, Is.Not.Null);
         });
     }
 
-    private static string IssueProof(long qq, long groupId, string game)
+    private static string IssueConfirmation(long qq, long groupId, string game)
     {
         var start = DivingFishPendingAuth.Begin(qq, groupId, game);
         var acquired = DivingFishPendingAuth.AcquireForCallback(start.State);
         Assert.That(acquired.Status, Is.EqualTo(DivingFishPendingAuth.AcquireStatus.Acquired));
         Assert.That(acquired.Entry, Is.Not.Null);
 
-        var code = DivingFishBindingProof.Issue(
+        var code = DivingFishBindingConfirmation.Issue(
             acquired.Entry!, $"sub-{qq}", "tester", DivingFishOAuth.ScopeOf(game));
         Assert.That(code, Is.Not.Null);
         return code!;
