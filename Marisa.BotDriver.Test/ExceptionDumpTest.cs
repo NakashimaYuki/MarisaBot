@@ -38,7 +38,7 @@ public class ExceptionDumpTest
         var path = ExceptionDump.Save(new InvalidOperationException("boom"), "test message", "unit-test");
 
         Assert.That(path, Is.Not.Null);
-        Assert.That(path, Does.StartWith(Path.Join(_tempRoot, "exceptions")));
+        Assert.That(NormalizePath(path!), Does.StartWith(NormalizePath(Path.Join(_tempRoot, "exceptions"))));
         Assert.That(File.Exists(path!), Is.True);
 
         var content = File.ReadAllText(path!);
@@ -49,6 +49,33 @@ public class ExceptionDumpTest
             Assert.That(content, Does.Contain("test message"));
             Assert.That(content, Does.Contain("unit-test"));
         });
+
+        static string NormalizePath(string value) =>
+            Path.GetFullPath(value.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar));
+    }
+
+    [Test]
+    public async Task ExceptionHandler_Should_Redact_Sensitive_Related_Message()
+    {
+        const string sentinel = "SECRET_SENTINEL";
+        var queue = new MessageQueueProvider();
+        var sender = new MessageSenderProvider(queue);
+        var message = new Message(new MessageChain(new MessageDataText(sentinel)), sender)
+        {
+            Type = MessageType.FriendMessage,
+            Sender = new SenderInfo(114514, "tester"),
+            RedactFromLogs = true
+        };
+
+        await new MarisaPluginBase().ExceptionHandler(new InvalidOperationException("boom"), message);
+
+        var dumpPath = Directory.GetFiles(Path.Join(_tempRoot, "exceptions"), "*.json").Single();
+        var content = File.ReadAllText(dumpPath);
+        Assert.Multiple(() =>
+        {
+            Assert.That(content, Does.Contain("[REDACTED]"));
+            Assert.That(content, Does.Not.Contain(sentinel));
+        });
     }
 
     [Test]
@@ -56,7 +83,9 @@ public class ExceptionDumpTest
     {
         var queue = new MessageQueueProvider();
         var sender = new MessageSenderProvider(queue);
-        var message = new Message(new MessageChain(new MessageDataText("ping")), sender)
+        var message = new Message(new MessageChain(
+            new MessageDataId(1, 0),
+            new MessageDataText("ping")), sender)
         {
             Type = MessageType.FriendMessage,
             Sender = new SenderInfo(114514, "tester")
@@ -80,7 +109,9 @@ public class ExceptionDumpTest
     {
         var queue = new MessageQueueProvider();
         var sender = new MessageSenderProvider(queue);
-        var message = new Message(new MessageChain(new MessageDataText("ping")), sender)
+        var message = new Message(new MessageChain(
+            new MessageDataId(1, 0),
+            new MessageDataText("ping")), sender)
         {
             Type = MessageType.FriendMessage,
             Sender = new SenderInfo(114514, "tester")
@@ -104,7 +135,7 @@ public class ExceptionDumpTest
     private static string CreateTestConfig(string tempRoot)
     {
         var sourceConfigPath = Path.Join(FindRepositoryRoot(), "Marisa.StartUp", "config.yaml");
-        var escapedTempRoot = tempRoot.Replace("\\", "\\\\");
+        var escapedTempRoot = tempRoot.Replace('\\', '/');
         var config = File.ReadAllText(sourceConfigPath);
         config = Regex.Replace(config, @"^tempPath:\s*.*$", $"tempPath:     {escapedTempRoot}", RegexOptions.Multiline);
         config = Regex.Replace(config, @"^databasePath:\s*.*$", "databasePath: bot.db", RegexOptions.Multiline);

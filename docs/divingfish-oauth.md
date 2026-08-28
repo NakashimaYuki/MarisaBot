@@ -31,6 +31,8 @@ divingFish:
 - `web.public` 是 Bot 其他网页功能使用的对外地址。水鱼授权会直接发送官方 `auth.diving-fish.com`
   链接；反向代理必须把 `/oauth/callback` 转发到 `web.private` 所指向的 MarisaBot 进程。
 - 除仅供本机调试外，不要把公网回调配置为 HTTP，也不要把 ASP.NET 监听端口直接暴露到公网。
+- MarisaBot 会丢弃 ASP.NET Core 自带的 query-bearing request-start 日志，并改记不含 query 的 method、path、
+  status 和 duration；生产环境同时禁用 Developer Exception Page。
 
 配置后应从公网环境确认回调地址能够到达 Bot，并确保 OAuth 应用登记值与反向代理暴露的地址完全一致。
 
@@ -51,8 +53,9 @@ maimai 和 Chunithm 分别通过 `mai bind`、`chu bind` 发起绑定，并在�
 校验发送者和群号之前原子地消费首次提交；错误 QQ 或错误群的首次提交也应烧毁该码。否则攻击者可能复制受害者发在
 群里的确认码，再由最初发起绑定的 QQ 重放。
 
-授权链接不是安全凭据，也不能替代 `state`、PKCE 和一次性确认。不要把授权链接或确认码写入长期日志；反向代理也应
-避免记录 callback 的完整 query string。
+授权链接不是安全凭据，也不能替代 `state`、PKCE 和一次性确认。Bot 的收发日志会把授权链接和确认码显示为
+`[REDACTED]`。反向代理仍必须使用不含 query string 的 callback 日志格式；部署后应以合成哨兵值请求 callback，
+确认应用、代理和日志采集端均未保存该值。
 
 ## 查询权限边界
 

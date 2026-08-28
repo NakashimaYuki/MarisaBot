@@ -119,9 +119,9 @@ public partial class MaiMaiDx
                             pending.CodeChallenge,
                             "maimai");
 
-                        next.Reply(
+                        next.Reply(MessageChain.FromSensitiveText(
                             $"请打开水鱼官方授权链接并登录你自己的账号（10 分钟内有效）：\n{authorizeUrl}\n\n" +
-                            "浏览器授权后会显示一次性确认命令；请由当前 QQ 在当前群发送。不要转发链接或确认码。");
+                            "浏览器授权后会显示一次性确认命令；请由当前 QQ 在当前群发送。不要转发链接或确认码。"));
                         return MarisaPluginTaskState.CompletedTask;
                     }
 
@@ -141,8 +141,8 @@ public partial class MaiMaiDx
                         var shortCode = ShortUrlStore.CreateShortUrl(url);
                         var shortUrl = ShortUrlStore.GetShortUrl(shortCode);
 
-                        message.Reply(
-                            $"请打开以下链接授权：\n{shortUrl}\n\n授权成功后复制并发送显示的验证码（形如XXXX-XXXX-XXXX）");
+                        message.Reply(MessageChain.FromSensitiveText(
+                            $"请打开以下链接授权：\n{shortUrl}\n\n授权成功后复制并发送显示的验证码（形如XXXX-XXXX-XXXX）"));
 
                         oauthVerifier = verifier;
                         stat = 10;

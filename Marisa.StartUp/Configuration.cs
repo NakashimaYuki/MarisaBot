@@ -42,13 +42,24 @@ public static class Configuration
             Layout   = "[${longdate}][${level:uppercase=true}] ${message}\n\n"
         };
 
+        var discardAspNetRequestDetails = new NullTarget("DiscardAspNetRequestDetails");
+
         // Step 3. Add targets to the configuration
         config.AddTarget(console);
         config.AddTarget(debug);
         config.AddTarget(error);
         config.AddTarget(warn);
+        config.AddTarget(discardAspNetRequestDetails);
 
         // Step 4. Define rules
+        config.LoggingRules.Add(new LoggingRule(
+            "Microsoft.AspNetCore.Hosting.Diagnostics",
+            LogLevel.Trace,
+            LogLevel.Info,
+            discardAspNetRequestDetails)
+        {
+            Final = true
+        });
         config.LoggingRules.Add(new LoggingRule("*", LogLevel.Info, console));
 
         // config.LoggingRules.Add(new LoggingRule("*", LogLevel.Info, LogLevel.Info, trace));
