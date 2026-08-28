@@ -6,6 +6,7 @@ using Marisa.Database.Entity.Plugin.Chunithm;
 using Marisa.Plugin.Shared.Chunithm;
 using Marisa.Plugin.Shared.Chunithm.DataFetcher;
 using Marisa.Plugin.Shared.Dialog;
+using Marisa.Plugin.Shared.DivingFish;
 using Marisa.Plugin.Shared.Lxns;
 using Marisa.Plugin.Shared.Util;
 using Marisa.Plugin.Shared.Util.Cacheable;
@@ -89,13 +90,53 @@ public partial class Chunithm
                         var shortCode = ShortUrlStore.CreateShortUrl(url);
                         var shortUrl = ShortUrlStore.GetShortUrl(shortCode);
 
-                        message.Reply(
-                            $"请打开以下链接授权：\n{shortUrl}\n\n授权成功后复制并发送显示的验证码（形如XXXX-XXXX-XXXX）");
+                        message.Reply(MessageChain.FromSensitiveText(
+                            $"请打开以下链接授权：\n{shortUrl}\n\n授权成功后复制并发送显示的验证码（形如XXXX-XXXX-XXXX）"));
 
                         oauthVerifier = verifier;
                         stat = 10;
 
                         // 10 分钟超时自动清理 dialog
+                        var oauthKey = (message.GroupInfo?.Id, message.Sender.Id);
+                        _ = Task.Delay(TimeSpan.FromMinutes(10)).ContinueWith(_ =>
+                            DialogManager.RemoveDialog(oauthKey));
+
+                        return MarisaPluginTaskState.ToBeContinued;
+                    }
+
+                    if (idx == 0 && DivingFishOAuth.IsConfigured)
+                    {
+                        try
+                        {
+                            if (await DivingFishTokenStore.GetValidToken(next.Sender.Id, "chunithm") != null)
+                            {
+                                next.Reply("DivingFish OAuth 绑定成功！（已有有效授权）");
+                                return DoBind(next, fetchers[idx]);
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            next.Reply($"水鱼 OAuth 暂不可用：{e.Message}");
+                            return MarisaPluginTaskState.CompletedTask;
+                        }
+
+                        if (!DivingFishOAuth.CanAuthorize)
+                        {
+                            next.Reply("机器人尚未配置有效的 HTTPS 水鱼 OAuth 回调地址，请联系管理员。");
+                            return MarisaPluginTaskState.CompletedTask;
+                        }
+
+                        var pending = DivingFishPendingAuth.Begin("chunithm");
+                        var authorizeUrl = await DivingFishOAuth.BuildAuthorizeUrl(
+                            pending.State,
+                            pending.CodeChallenge,
+                            "chunithm");
+
+                        next.Reply(MessageChain.FromSensitiveText(
+                            $"请打开水鱼官方授权链接并登录你自己的账号（10 分钟内有效）：\n{authorizeUrl}\n\n" +
+                            "浏览器授权后会显示一次性确认码，请复制并发送到当前会话。"));
+
+                        stat = 20;
                         var oauthKey = (message.GroupInfo?.Id, message.Sender.Id);
                         _ = Task.Delay(TimeSpan.FromMinutes(10)).ContinueWith(_ =>
                             DialogManager.RemoveDialog(oauthKey));
@@ -198,6 +239,43 @@ public partial class Chunithm
                         next.Reply($"绑定失败: {e.Message}");
                         return MarisaPluginTaskState.CompletedTask;
                     }
+                }
+                case 20:
+                {
+                    var code = next.Command.Trim().ToString();
+                    if (!Regex.IsMatch(code, "^[0-9A-Fa-f]{32}$"))
+                    {
+                        next.Reply("确认码格式错误，会话已关闭");
+                        return MarisaPluginTaskState.CompletedTask;
+                    }
+
+                    var result = DivingFishBindingConfirmation.Consume(code);
+                    if (!result.IsSuccess)
+                    {
+                        next.Reply("确认码无效或已过期，请重新绑定");
+                        return MarisaPluginTaskState.CompletedTask;
+                    }
+
+                    try
+                    {
+                        var confirmation = result.Entry!;
+                        DivingFishBindingService.Commit(
+                            next.Sender.Id,
+                            confirmation.Sub,
+                            confirmation.Username,
+                            confirmation.Scope,
+                            confirmation.Game);
+                        var account = string.IsNullOrWhiteSpace(confirmation.Username)
+                            ? "已授权账号"
+                            : confirmation.Username;
+                        next.Reply($"DivingFish OAuth 绑定成功！（水鱼账号：{account}）");
+                    }
+                    catch (Exception e)
+                    {
+                        next.Reply($"绑定失败: {e.Message}");
+                    }
+
+                    return MarisaPluginTaskState.CompletedTask;
                 }
             }
 

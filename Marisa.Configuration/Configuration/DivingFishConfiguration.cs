@@ -13,4 +13,16 @@ public class DivingFishConfiguration
     }
 
     internal string? DevTokenRaw => _devToken;
+
+    public string? ClientId { get; set; }
+
+    public string? ClientSecret { get; set; }
+
+    public string? RedirectUri { get; set; }
+
+    internal string? ClientIdRaw => ClientId;
+
+    internal string? ClientSecretRaw => ClientSecret;
+
+    internal string? RedirectUriRaw => RedirectUri;
 }

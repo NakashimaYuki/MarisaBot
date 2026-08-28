@@ -1,8 +1,11 @@
+using System;
 using System.Collections.Generic;
 using System.Dynamic;
 using System.Linq;
+using System.Net.Http;
 using System.Threading.Tasks;
 using Flurl.Http;
+using Flurl.Http.Testing;
 using Marisa.BotDriver.Entity.Message;
 using Marisa.BotDriver.Entity.MessageSender;
 using Marisa.Plugin.Shared.Chunithm;
@@ -12,8 +15,15 @@ using NUnit.Framework;
 
 namespace Marisa.Plugin.Test;
 
+[NonParallelizable]
 public class ChunithmDivingFishDataFetcherTest
 {
+    [SetUp]
+    public void SetUp()
+    {
+        new DivingFishDataFetcher(CreateSongDb()).Reset();
+    }
+
     [TearDown]
     public void TearDown()
     {
@@ -134,6 +144,8 @@ public class ChunithmDivingFishDataFetcherTest
     [Test]
     public async Task GetRating_And_GetScores_Should_Skip_Unmatched_Songs()
     {
+        using var httpTest = new HttpTest();
+        httpTest.RespondWithJson(new { version = new[] { "CHUNITHM CURRENT" } });
         var songDb = CreateSongDb();
         var fetcher = new TestDivingFishDataFetcher(songDb, new ChunithmRating
         {
@@ -167,19 +179,103 @@ public class ChunithmDivingFishDataFetcherTest
         });
     }
 
+    [Test]
+    public async Task GetRating_Should_Use_Official_Latest_Versions_For_N20()
+    {
+        using var httpTest = new HttpTest();
+        httpTest.RespondWithJson(new { version = new[] { "CHUNITHM CURRENT" } });
+        var songDb = CreateSongDbWithSongs(
+            CreateSong(1, "old-song", "CHUNITHM OLD"),
+            CreateSong(2, "new-song", "CHUNITHM CURRENT"));
+        var fetcher = new TestDivingFishDataFetcher(songDb, new ChunithmRating
+        {
+            Username = "tester",
+            Records = new Records
+            {
+                Best =
+                [
+                    CreateScore(1, "old-song", 0, 1_009_000, 14.9m),
+                    CreateScore(2, "new-song", 0, 1_009_000, 14.8m)
+                ]
+            }
+        });
+
+        var rating = await fetcher.GetRating(CreateMessage());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rating.Records.Best.Select(score => score.Id), Is.EqualTo(new[] { 1L }));
+            Assert.That(rating.Records.Recent.Select(score => score.Id), Is.EqualTo(new[] { 2L }));
+        });
+    }
+
+    [Test]
+    public async Task LatestVersion_Should_Be_Queried_For_Every_Rating()
+    {
+        using var httpTest = new HttpTest();
+        httpTest.RespondWithJson(new { version = new[] { "CHUNITHM CURRENT" } });
+        httpTest.RespondWithJson(new { version = new[] { "CHUNITHM CURRENT" } });
+        var songDb = CreateSongDbWithSongs(CreateSong(2, "new-song", "CHUNITHM CURRENT"));
+        var fetcher = new TestDivingFishDataFetcher(songDb, new ChunithmRating
+        {
+            Records = new Records
+            {
+                Best = [CreateScore(2, "new-song", 0, 1_009_000, 14.8m)]
+            }
+        });
+
+        await fetcher.GetRating(CreateMessage());
+        await fetcher.GetRating(CreateMessage());
+
+        Assert.That(httpTest.CallLog.Count(call =>
+            call.Request.Url.ToString().EndsWith("/api/chunithmprober/latest_version", StringComparison.Ordinal)),
+            Is.EqualTo(2));
+    }
+
+    [Test]
+    public void LatestVersion_Failure_Should_Propagate()
+    {
+        using var httpTest = new HttpTest();
+        httpTest.RespondWith("unavailable", 503);
+        var fetcher = new TestDivingFishDataFetcher(CreateSongDb(), new ChunithmRating
+        {
+            Records = new Records
+            {
+                Best = [CreateScore(1, "known-song", 0, 1_009_000, 14.9m)]
+            }
+        });
+
+        var error = Assert.ThrowsAsync<FlurlHttpException>(() => fetcher.GetRating(CreateMessage()));
+
+        Assert.That(error!.StatusCode, Is.EqualTo(503));
+    }
+
     private static SongDb<ChunithmSong> CreateSongDb()
     {
         return new SongDb<ChunithmSong>("", "", () => [CreateSong(1, "known-song")]);
     }
 
-    private static ChunithmSong CreateSong(long id, string title)
+    private static SongDb<ChunithmSong> CreateSongDbWithSongs(params ChunithmSong[] songs)
+    {
+        return new SongDb<ChunithmSong>("", "", () => songs.ToList());
+    }
+
+    private static Message CreateMessage()
+    {
+        return new Message(null!, [])
+        {
+            Sender = new SenderInfo(1, "test")
+        };
+    }
+
+    private static ChunithmSong CreateSong(long id, string title, string version = "CHUNITHM LUMINOUS")
     {
         dynamic song = new ExpandoObject();
         song.Id = id;
         song.Title = title;
         song.Artist = "artist";
         song.Genre = "genre";
-        song.Version = "CHUNITHM LUMINOUS";
+        song.Version = version;
 
         dynamic beatmap = new ExpandoObject();
         beatmap.Constant = 14.9;
@@ -209,8 +305,12 @@ public class ChunithmDivingFishDataFetcherTest
         };
     }
 
-    private sealed class TestDivingFishDataFetcher(SongDb<ChunithmSong> songDb, ChunithmRating rating) : DivingFishDataFetcher(songDb)
+    private sealed class TestDivingFishDataFetcher(
+        SongDb<ChunithmSong> songDb,
+        ChunithmRating rating) : DivingFishDataFetcher(songDb)
     {
+        protected override bool OAuthEnabled => false;
+
         public override List<ChunithmSong> GetSongList()
         {
             return SongDb.SongList;

@@ -33,7 +33,29 @@ public static class ProberError
         {
             400 or 401 => NotBound(prober),
             403        => PrivacyHint,
+            429        => "今日查询次数已达上限，请明天再试",
+            410        => "水鱼旧版 API 已停止服务，请联系机器人管理员完成 OAuth 迁移",
             _          => Fallback(prober, statusCode, message ?? msg),
+        };
+    }
+
+    public static string DivingFishOAuth(int statusCode, string body, string prober = "水鱼")
+    {
+        var detail = ReadStringField(body, "message")
+                     ?? ReadStringField(body, "error_description")
+                     ?? ReadStringField(body, "error")
+                     ?? ReadStringField(body, "msg");
+
+        return statusCode switch
+        {
+            400 => detail is null
+                ? $"{prober}账号已不存在，或请求参数无效"
+                : $"{prober}请求被拒绝：{detail}",
+            401 => $"{prober}授权已失效，请重新绑定",
+            403 => $"{prober}授权范围不足，或该账号尚未同意用户协议",
+            429 => "今日查询次数已达上限，请明天再试",
+            503 => $"{prober} OAuth 服务暂不可用，请稍后再试",
+            _   => Fallback($"{prober} OAuth", statusCode, detail),
         };
     }
 

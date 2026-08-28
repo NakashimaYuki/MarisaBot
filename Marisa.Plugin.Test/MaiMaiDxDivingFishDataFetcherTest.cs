@@ -94,6 +94,27 @@ public class MaiMaiDxDivingFishDataFetcherTest
         });
     }
 
+    [Test]
+    public async Task GetRating_PublicResponse_PreservesServerAuthoritativeSplit()
+    {
+        var songDb = CreateSongDb();
+        var publicOld = new List<SongScore> { CreateSongScore(9001, 13.0, 100.5) };
+        var publicNew = new List<SongScore> { CreateSongScore(9002, 13.0, 100.5) };
+        var fetcher = new PublicDivingFishDataFetcher(songDb, publicOld, publicNew);
+        var message = new Message(null!, [])
+        {
+            Sender = new SenderInfo(1, "test")
+        };
+
+        var rating = await fetcher.GetRating(message);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rating.OldScores.Select(x => x.Id), Is.EqualTo(new[] { 9001L }));
+            Assert.That(rating.NewScores.Select(x => x.Id), Is.EqualTo(new[] { 9002L }));
+        });
+    }
+
     private static SongDb<MaiMaiSong> CreateSongDb()
     {
         return new SongDb<MaiMaiSong>("", "", () =>
@@ -151,9 +172,28 @@ public class MaiMaiDxDivingFishDataFetcherTest
 
     private sealed class TestDivingFishDataFetcher(SongDb<MaiMaiSong> songDb, List<SongScore> records) : DivingFishDataFetcher(songDb)
     {
+        protected override bool OAuthEnabled => false;
+
         protected override Task<DivingFishDxRatingResponse> FetchScores(Message message, bool qqOnly)
         {
             return Task.FromResult(new DivingFishDxRatingResponse("tester", records));
+        }
+    }
+
+    private sealed class PublicDivingFishDataFetcher(
+        SongDb<MaiMaiSong> songDb,
+        List<SongScore> oldScores,
+        List<SongScore> newScores) : DivingFishDataFetcher(songDb)
+    {
+        protected override bool OAuthEnabled => true;
+
+        protected override Task<DivingFishDxRatingResponse> FetchScoresByQq(long qq)
+        {
+            return Task.FromResult(new DivingFishDxRatingResponse(
+                "public",
+                oldScores.Concat(newScores).ToList(),
+                oldScores,
+                newScores));
         }
     }
 }

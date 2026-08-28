@@ -6,6 +6,8 @@ public record MessageChain
 {
     public readonly List<MessageData.MessageData> Messages;
 
+    public bool RedactFromLogs { get; init; }
+
     public MessageChain(params MessageData.MessageData[] messages)
     {
         Messages = messages.ToList();
@@ -30,6 +32,11 @@ public record MessageChain
         return new MessageChain(new MessageDataText(text.AsMemory()));
     }
 
+    public static MessageChain FromSensitiveText(string text)
+    {
+        return new MessageChain(new MessageDataText(text.AsMemory())) { RedactFromLogs = true };
+    }
+
     public static MessageChain FromImageB64(string b64)
     {
         return new MessageChain(MessageDataImage.FromBase64(b64));
@@ -42,6 +49,8 @@ public record MessageChain
 
     public override string ToString()
     {
+        if (RedactFromLogs) return "[REDACTED]";
+
         return string.Join(' ', Messages.Select(m =>
         {
             return m.Type switch

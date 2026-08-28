@@ -24,7 +24,7 @@ public class ChunithmRating
     }
 
     [JsonProperty("records", Required = Required.Always)]
-    public Records Records { get; set; }
+    public Records Records { get; set; } = new();
 
     [JsonProperty("nickname")]
     public string Username { get; set; }
@@ -52,6 +52,9 @@ public class Records
         set => _best = value;
     }
 
+    [JsonProperty("n20")]
+    public ChunithmScore[] N20 { get; set; } = [];
+
     [JsonProperty("r10", Required = Required.Always)]
-    public ChunithmScore[] Recent { get; set; }
+    public ChunithmScore[] Recent { get; set; } = [];
 }
