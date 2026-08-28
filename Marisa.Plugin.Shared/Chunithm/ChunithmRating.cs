@@ -24,7 +24,7 @@ public class ChunithmRating
     }
 
     [JsonProperty("records", Required = Required.Always)]
-    public Records Records { get; set; }
+    public Records Records { get; set; } = new();
 
     [JsonProperty("nickname")]
     public string Username { get; set; }
@@ -52,6 +52,11 @@ public class Records
         set => _best = value;
     }
 
+    // /query/player 在 CHUNITHM 2026 后用 n20 返回新版本 Best 20；
+    // /player/records 则仍返回完整 best，并保留（现为空的）r10。
+    [JsonProperty("n20")]
+    public ChunithmScore[] N20 { get; set; } = [];
+
     [JsonProperty("r10", Required = Required.Always)]
-    public ChunithmScore[] Recent { get; set; }
+    public ChunithmScore[] Recent { get; set; } = [];
 }

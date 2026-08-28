@@ -41,9 +41,13 @@
         - 其中`resourceRoot`为资源根目录，默认指向`Marisa.Frontend\public\assets`
         - 其中`tempPath`为临时文件根目录，可随意选用，用于存放Bot执行过程中的缓存
         - 其中`ffmpegPath`为FFmpeg的路径，用于处理音频文件
-    - 需要补充里面的一些token（可以先不补充，但是有些功能会失效）
+    - 需要补充里面的一些 token（可以先不补充，但是有些功能会失效）
         - `clientId`和`clientSecret`为osu!的API的token，可以在osu的用户设置界面进行申请
-        - `divingFish.devToken` 为水鱼的开发者 token，需要联系水鱼本人获取
+        - 水鱼查分使用 OAuth，需要配置 `divingFish.clientId`、`divingFish.clientSecret` 和公网 HTTPS
+          `divingFish.redirectUri`；完整部署、迁移与安全说明见
+          [水鱼 OAuth 部署说明](docs/divingfish-oauth.md)
+        - `divingFish.devToken` 只用于旧接口过渡；水鱼计划于 **2026-10-01** 退役 DevToken 接口，
+          新部署不应再依赖它
     - 配置 Marisa 连接 NapCat（需要与 NapCat 配置一致）：
         ```yaml
         napCat:

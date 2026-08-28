@@ -23,6 +23,8 @@ public abstract class BotDriver(
     protected readonly MessageDispatcher MessageDispatcher = new(pluginsAll, serviceProvider, dict);
     protected readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly IOrderedMessageIngressPolicy[] _orderedIngressPolicies =
+        pluginsAll.OfType<IOrderedMessageIngressPolicy>().ToArray();
 
     protected CancellationToken ShutdownToken => _shutdown.Token;
 
@@ -67,7 +69,16 @@ public abstract class BotDriver(
             while (await MessageQueueProvider.RecvQueue.Reader.WaitToReadAsync(ShutdownToken))
             {
                 var message = await MessageQueueProvider.RecvQueue.Reader.ReadAsync(ShutdownToken);
-                _ = ProcMessageStep(message);
+                var requiresOrderedProcessing = _orderedIngressPolicies.Any(policy => policy.Matches(message));
+                if (requiresOrderedProcessing)
+                {
+                    message.RedactFromLogs = true;
+                    await ProcMessageStep(message);
+                }
+                else
+                {
+                    _ = ProcMessageStep(message);
+                }
             }
         }
         catch (OperationCanceledException) when (ShutdownToken.IsCancellationRequested)

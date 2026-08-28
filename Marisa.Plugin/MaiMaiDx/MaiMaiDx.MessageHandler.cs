@@ -6,6 +6,7 @@ using Marisa.Configuration;
 using Marisa.Database;
 using Marisa.Database.Entity.Plugin.MaiMaiDx;
 using Marisa.Plugin.Shared.Dialog;
+using Marisa.Plugin.Shared.DivingFish;
 using Marisa.Plugin.Shared.Lxns;
 using Marisa.Plugin.Shared.MaiMaiDx;
 using Marisa.Plugin.Shared.MaiMaiDx.DataFetcher;
@@ -76,6 +77,51 @@ public partial class MaiMaiDx
                     if (!int.TryParse(next.Command.Span, out var idx) || idx < 0 || idx >= servers.Length)
                     {
                         next.Reply("错误的序号，会话已关闭");
+                        return MarisaPluginTaskState.CompletedTask;
+                    }
+
+                    // DivingFish OAuth：已有 consent 时 OBO 可直接换票；否则发起
+                    // authorization-code + PKCE，最终由全局确认处理器提交绑定。
+                    if (idx == 0 && DivingFishOAuth.IsConfigured)
+                    {
+                        if (next.Type != MessageType.GroupMessage || next.GroupInfo == null)
+                        {
+                            next.Reply("为验证 QQ 与授权账号的对应关系，水鱼 OAuth 只能在群聊中绑定。");
+                            return MarisaPluginTaskState.CompletedTask;
+                        }
+
+                        try
+                        {
+                            if (await DivingFishTokenStore.GetValidToken(next.Sender.Id, "maimai") != null)
+                            {
+                                next.Reply("DivingFish OAuth 绑定成功！（已有有效授权）");
+                                return DoBind(next, servers[idx]);
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            next.Reply($"水鱼 OAuth 暂不可用：{e.Message}");
+                            return MarisaPluginTaskState.CompletedTask;
+                        }
+
+                        if (!DivingFishOAuth.CanAuthorize)
+                        {
+                            next.Reply("机器人尚未配置有效的 HTTPS 水鱼 OAuth 回调地址，请联系管理员。");
+                            return MarisaPluginTaskState.CompletedTask;
+                        }
+
+                        var pending = DivingFishPendingAuth.Begin(
+                            next.Sender.Id,
+                            next.GroupInfo.Id,
+                            "maimai");
+                        var authorizeUrl = await DivingFishOAuth.BuildAuthorizeUrl(
+                            pending.State,
+                            pending.CodeChallenge,
+                            "maimai");
+
+                        next.Reply(
+                            $"请打开水鱼官方授权链接并登录你自己的账号（10 分钟内有效）：\n{authorizeUrl}\n\n" +
+                            "浏览器授权后会显示一次性确认命令；请由当前 QQ 在当前群发送。不要转发链接或确认码。");
                         return MarisaPluginTaskState.CompletedTask;
                     }
 
@@ -668,15 +714,12 @@ public partial class MaiMaiDx
                 NewScores = scores.Skip(DivingFishDataFetcher.OldScoreLimit).Take(DivingFishDataFetcher.NewScoreLimit).ToList()
             };
         }
-        catch (NotSupportedException)
+        catch (NotSupportedException exception)
         {
-            rat = rat with
-            {
-                OldScores = rat.OldScores.Concat(rat.NewScores)
-                    .OrderByDescending(x => x.Rating).ThenBy(x => x.Id)
-                    .Take(DivingFishDataFetcher.OldScoreLimit).ToList(),
-                NewScores = []
-            };
+            // 公开 b50 只保证旧曲 35 + 新曲 15，无法据此还原跨版本的精确全局 b35。
+            // 不能静默生成一个看似有效但可能漏掉新曲第 16 名之后记录的结果。
+            message.Reply(exception.Message);
+            return MarisaPluginTaskState.CompletedTask;
         }
 
         var context = new WebContext(new { b50 = rat });

@@ -18,6 +18,12 @@ public record Message
     // Control
     public MessageType Type;
 
+    /// <summary>
+    ///     Sensitive messages are logged without their message chain. The flag is set by
+    ///     an ingress policy before the first log statement runs.
+    /// </summary>
+    public bool RedactFromLogs;
+
     private Message(ReadOnlyMemory<char> command)
     {
         Command = command;
@@ -79,9 +85,10 @@ public record Message
 
     public override string ToString()
     {
+        var body = RedactFromLogs ? "[REDACTED]" : MessageChain?.ToString();
         return GroupInfo == null
-            ? $"[{Type}] {Sender.Name} ({Sender.Id}) => {MessageChain}"
-            : $"[{Type}] {Sender.Name} ({Sender.Id}) -> {GroupInfo?.Name ?? "Unknown"} ({GroupInfo?.Id ?? 0}) => {MessageChain}";
+            ? $"[{Type}] {Sender.Name} ({Sender.Id}) => {body}"
+            : $"[{Type}] {Sender.Name} ({Sender.Id}) -> {GroupInfo?.Name ?? "Unknown"} ({GroupInfo?.Id ?? 0}) => {body}";
     }
 
     #region Reply

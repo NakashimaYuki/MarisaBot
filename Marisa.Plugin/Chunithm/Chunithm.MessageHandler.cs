@@ -6,6 +6,7 @@ using Marisa.Database.Entity.Plugin.Chunithm;
 using Marisa.Plugin.Shared.Chunithm;
 using Marisa.Plugin.Shared.Chunithm.DataFetcher;
 using Marisa.Plugin.Shared.Dialog;
+using Marisa.Plugin.Shared.DivingFish;
 using Marisa.Plugin.Shared.Lxns;
 using Marisa.Plugin.Shared.Util;
 using Marisa.Plugin.Shared.Util.Cacheable;
@@ -101,6 +102,49 @@ public partial class Chunithm
                             DialogManager.RemoveDialog(oauthKey));
 
                         return MarisaPluginTaskState.ToBeContinued;
+                    }
+
+                    if (idx == 0 && DivingFishOAuth.IsConfigured)
+                    {
+                        if (next.Type != MessageType.GroupMessage || next.GroupInfo == null)
+                        {
+                            next.Reply("为验证 QQ 与授权账号的对应关系，水鱼 OAuth 只能在群聊中绑定。");
+                            return MarisaPluginTaskState.CompletedTask;
+                        }
+
+                        try
+                        {
+                            if (await DivingFishTokenStore.GetValidToken(next.Sender.Id, "chunithm") != null)
+                            {
+                                next.Reply("DivingFish OAuth 绑定成功！（已有有效授权）");
+                                return DoBind(next, fetchers[idx]);
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            next.Reply($"水鱼 OAuth 暂不可用：{e.Message}");
+                            return MarisaPluginTaskState.CompletedTask;
+                        }
+
+                        if (!DivingFishOAuth.CanAuthorize)
+                        {
+                            next.Reply("机器人尚未配置有效的 HTTPS 水鱼 OAuth 回调地址，请联系管理员。");
+                            return MarisaPluginTaskState.CompletedTask;
+                        }
+
+                        var pending = DivingFishPendingAuth.Begin(
+                            next.Sender.Id,
+                            next.GroupInfo.Id,
+                            "chunithm");
+                        var authorizeUrl = await DivingFishOAuth.BuildAuthorizeUrl(
+                            pending.State,
+                            pending.CodeChallenge,
+                            "chunithm");
+
+                        next.Reply(
+                            $"请打开水鱼官方授权链接并登录你自己的账号（10 分钟内有效）：\n{authorizeUrl}\n\n" +
+                            "浏览器授权后会显示一次性确认命令；请由当前 QQ 在当前群发送。不要转发链接或确认码。");
+                        return MarisaPluginTaskState.CompletedTask;
                     }
 
                     if (idx is 0 or 1)
