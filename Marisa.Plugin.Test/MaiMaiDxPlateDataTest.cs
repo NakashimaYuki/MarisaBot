@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Dynamic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using Marisa.Plugin.Shared.MaiMaiDx;
 using NUnit.Framework;
 
@@ -17,12 +19,14 @@ public class MaiMaiDxPlateDataTest
         "超七味星人", "隅田川星人", // 名字含版本代字（超=GreeN / 星=UNiVERSE），验证反查保护
         "Revo@LC",                 // 别名"Revo"是它的子串，验证 CharterAlias 反查保护
         "JAQ", "Jack & Licorice Gunjyo", "群青リコリス", // Jack/群青リコリス 未设别名（可打），验证解析正确
+        "某S氏", "舞舞10年ズ（チャンとはっぴー）",
     ];
 
     // 含合作名义"sasakure.UK x DECO*27"，验证 substring 命中；"HIMEHINA" 验证纯 artist 单边命中。
     private static readonly IReadOnlyCollection<string> Artists =
     [
         "DECO*27", "sasakure.UK x DECO*27", "HIMEHINA", "rintaro soma", "Various Artists",
+        "A-One", "SAMBA MASTER 佐藤",
     ];
 
     private static PlateData.Query MustParse(string raw)
@@ -37,6 +41,30 @@ public class MaiMaiDxPlateDataTest
         var ok = PlateData.TryParse(raw, Charters, Artists, out _, out var error);
         Assert.That(ok, Is.False, $"parse unexpectedly succeeded for '{raw}'");
         return error!;
+    }
+
+    private static (IReadOnlyCollection<string> Charters, IReadOnlyCollection<string> Artists) LoadKnownNames()
+    {
+        var repositoryRoot = Directory.GetParent(Environment.CurrentDirectory)!.Parent!.Parent!.Parent!.ToString();
+        var path = Path.Join(repositoryRoot, "Marisa.Frontend", "public", "assets", "maimai", "SongInfo.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+
+        var charters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var artists = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var song in document.RootElement.EnumerateArray())
+        {
+            var basicInfo = song.GetProperty("basic_info");
+            var artist = basicInfo.GetProperty("artist").GetString();
+            if (!string.IsNullOrWhiteSpace(artist)) artists.Add(artist);
+
+            foreach (var chart in song.GetProperty("charts").EnumerateArray())
+            {
+                var charter = chart.GetProperty("charter").GetString();
+                if (!string.IsNullOrWhiteSpace(charter) && charter != "-") charters.Add(charter);
+            }
+        }
+
+        return (charters, artists);
     }
 
     private static MaiMaiSong CreateSong(long id, string version)
@@ -138,6 +166,81 @@ public class MaiMaiDxPlateDataTest
         var c = (PlateData.Selector.Charter)query.Selectors.Single();
         Assert.That(c.Name, Is.EqualTo(charter));
         Assert.That(query.Threshold.Level, Is.EqualTo(level));
+    }
+
+    [TestCase("某S氏")]
+    [TestCase("舞舞10年ズ")]
+    public void ReservedThresholdTokenInsideCharterNameIsNotStripped(string charter)
+    {
+        var query = MustParse($"{charter}完成表");
+
+        Assert.That(query.Selectors.Single(), Is.InstanceOf<PlateData.Selector.Charter>());
+        Assert.That(((PlateData.Selector.Charter)query.Selectors.Single()).Name, Is.EqualTo(charter));
+        Assert.That(query.Threshold.DisplayName, Is.EqualTo("SSS"));
+    }
+
+    [TestCase("A-One")]
+    [TestCase("SAMBA MASTER 佐藤")]
+    public void ReservedTokenInsideArtistNameIsNotStripped(string artist)
+    {
+        var query = MustParse($"{artist}完成表");
+
+        Assert.That(query.Selectors.Single(), Is.InstanceOf<PlateData.Selector.Artist>());
+        Assert.That(((PlateData.Selector.Artist)query.Selectors.Single()).Name, Is.EqualTo(artist));
+        Assert.That(query.Threshold.DisplayName, Is.EqualTo("SSS"));
+    }
+
+    [TestCase("某S氏S完成表")]
+    [TestCase("S某S氏完成表")]
+    public void ExplicitRankOutsideCharterNameStillParses(string raw)
+    {
+        var query = MustParse(raw);
+
+        Assert.That(((PlateData.Selector.Charter)query.Selectors.Single()).Name, Is.EqualTo("某S氏"));
+        Assert.That(query.Threshold.DisplayName, Is.EqualTo("S"));
+    }
+
+    [TestCase("某S氏MST完成表")]
+    [TestCase("MST某S氏完成表")]
+    public void ExplicitDifficultyOutsideCharterNameStillParses(string raw)
+    {
+        var query = MustParse(raw);
+
+        Assert.That(((PlateData.Selector.Charter)query.Selectors.Single()).Name, Is.EqualTo("某S氏"));
+        Assert.That(query.LevelIdxes, Is.EqualTo(new[] { 3 }));
+    }
+
+    [Test]
+    public void KnownNamesSurviveReservedTokenParsingAloneAndWithFields()
+    {
+        var (charters, artists) = LoadKnownNames();
+        var failures = new List<string>();
+
+        foreach (var name in charters.Concat(artists).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            Check($"{name}完成表", name, "SSS", PlateData.DefaultLevelIdxes);
+            Check($"神{name}完成表", name, "AP", PlateData.DefaultLevelIdxes);
+            Check($"{name}神完成表", name, "AP", PlateData.DefaultLevelIdxes);
+            Check($"MST{name}完成表", name, "SSS", [3]);
+            Check($"{name}MST完成表", name, "SSS", [3]);
+        }
+
+        Assert.That(failures, Is.Empty, string.Join(Environment.NewLine, failures));
+
+        void Check(string raw, string expectedName, string threshold, IReadOnlyList<int> levelIdxes)
+        {
+            var ok = PlateData.TryParse(raw, charters, artists, out var query, out var error);
+            var nameSelectors = query?.Selectors.Where(x => x is
+                PlateData.Selector.Charter or PlateData.Selector.Artist or PlateData.Selector.CharterOrArtist).ToList();
+            if (!ok || nameSelectors is not { Count: 1 } || nameSelectors[0].Display != expectedName ||
+                query!.Selectors.Count != 1 || query.Threshold.DisplayName != threshold ||
+                !query.LevelIdxes.SequenceEqual(levelIdxes))
+            {
+                failures.Add($"{raw} => {error?.Kind}/{error?.Detail}; " +
+                             $"selectors={string.Join(',', query?.Selectors.Select(x => $"{x.GetType().Name}:{x.Display}") ?? [])}; " +
+                             $"threshold={query?.Threshold.DisplayName}; levels={string.Join(',', query?.LevelIdxes ?? [])}");
+            }
+        }
     }
 
     [TestCase("术力口将完成表",  "niconico & VOCALOID")]

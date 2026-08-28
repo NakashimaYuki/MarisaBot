@@ -787,6 +787,16 @@ public static class PlateData
             return false;
         }
 
+        // 已知谱师/作曲家名先作为整体抽出，避免名称内部的 S、舞舞、MASTER、数字等被后续字段解析吞掉；
+        // 名称外部的字段仍留在 parsePart 中按原顺序解析，恰好等于保留 token 的输入仍保持原语义。
+        var selectors = new List<Selector>();
+        var parsePart = inner;
+        if (TryExtractKnownName(inner, out var nameStart, out var nameLength, out var nameSelector))
+        {
+            selectors.Add(nameSelector!);
+            parsePart = (inner[..nameStart] + inner[(nameStart + nameLength)..]).Trim();
+        }
+
         // 1. 阈值 token —— 字段位置可任意（"真代EXPERT将"=阈值在末尾、"将真EXPERT"=阈值在开头都接受）。
         //    longest-first 顺序遍历表，找 rightmost 满足"边界合法"的出现位置，strip 掉得到剩余字符串。
         //    边界规则：纯 ASCII 字母 token（如 "A"、"AAA"、"FC+"）必须 word boundary（前后不是 ASCII 字母），
@@ -796,7 +806,7 @@ public static class PlateData
         int thresholdAt = -1, thresholdLen = 0;
         foreach (var (token, t) in ThresholdEntriesLongestFirst)
         {
-            var pos = FindBoundedRightmost(inner, token);
+            var pos = FindBoundedRightmost(parsePart, token);
             if (pos >= 0)
             {
                 threshold    = t;
@@ -808,8 +818,8 @@ public static class PlateData
 
         // 默认阈值延后到 selector 解析后再定（完整牌名如「霸者」可能自带阈值档）。
         var afterThreshold = thresholdAt >= 0
-            ? (inner[..thresholdAt] + inner[(thresholdAt + thresholdLen)..]).Trim()
-            : inner;
+            ? (parsePart[..thresholdAt] + parsePart[(thresholdAt + thresholdLen)..]).Trim()
+            : parsePart;
 
         // 2. 难度 token（可选，同样 anywhere + rightmost + 同样的 ASCII letter 边界规则）。
         //    缺省时回落到 DefaultLevelIdxes ([3, 4] = MASTER + Re:MASTER)；显式给一个就是单元素。
@@ -831,7 +841,7 @@ public static class PlateData
             ? (afterThreshold[..diffAt] + afterThreshold[(diffAt + diffLen)..]).Trim()
             : afterThreshold;
 
-        if (selectorPart.Length == 0)
+        if (selectorPart.Length == 0 && selectors.Count == 0)
         {
             error = new(ErrorKind.UnknownSelector, inner);
             return false;
@@ -844,7 +854,6 @@ public static class PlateData
         //
         //    冲突规则：同类 selector 出现两次（含 Level + Constant 互斥，因为 Constant 隐含确定 Level）
         //    → ConflictingSelector 错误。
-        var selectors = new List<Selector>();
         var workingPart = selectorPart;
 
         while (true)
@@ -1000,6 +1009,84 @@ public static class PlateData
 
         query = new Query(selectors, threshold, levelIdxes);
         return true;
+
+        bool TryExtractKnownName(string input, out int start, out int length, out Selector? selector)
+        {
+            start = -1;
+            length = 0;
+            selector = null;
+
+            if (!IsReservedStandaloneToken(input) && TryCreateKnownNameSelector(input, out selector))
+            {
+                start = 0;
+                length = input.Length;
+                return true;
+            }
+
+            var candidate = knownCharters.Select(name => (Name: name, IsCharter: true, IsArtist: false))
+                .Concat(CharterIdentityMap.Keys.Select(name => (Name: name, IsCharter: true, IsArtist: false)))
+                .Concat(knownArtists.Select(name => (Name: name, IsCharter: false, IsArtist: true)))
+                .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(group =>
+                {
+                    var name = group.Key;
+                    return (
+                        Name: name,
+                        Start: input.LastIndexOf(name, StringComparison.OrdinalIgnoreCase),
+                        IsCharter: group.Any(x => x.IsCharter),
+                        IsArtist: group.Any(x => x.IsArtist));
+                })
+                .Where(x => x.Start >= 0 &&
+                            !IsReservedStandaloneToken(x.Name) &&
+                            (x.Start + x.Name.Length >= input.Length ||
+                             input[x.Start + x.Name.Length] != OptionalDaiSuffix[0]))
+                .OrderByDescending(x => x.Name.Length)
+                .ThenByDescending(x => x.Start)
+                .FirstOrDefault();
+
+            if (candidate.Name is null) return false;
+
+            start = candidate.Start;
+            length = candidate.Name.Length;
+            selector = candidate.IsCharter && candidate.IsArtist
+                ? new Selector.CharterOrArtist(input.Substring(start, length))
+                : candidate.IsCharter
+                    ? new Selector.Charter(input.Substring(start, length))
+                    : new Selector.Artist(input.Substring(start, length));
+            return true;
+
+            bool TryCreateKnownNameSelector(string name, out Selector? knownNameSelector)
+            {
+                var charterHit = knownCharters.Any(c => c.Contains(name, StringComparison.OrdinalIgnoreCase)) ||
+                                 CharterIdentityMap.Keys.Any(c => c.Contains(name, StringComparison.OrdinalIgnoreCase));
+                var artistHit = knownArtists.Any(a => a.Contains(name, StringComparison.OrdinalIgnoreCase));
+                knownNameSelector = charterHit && artistHit
+                    ? new Selector.CharterOrArtist(name)
+                    : charterHit
+                        ? new Selector.Charter(name)
+                        : artistHit
+                            ? new Selector.Artist(name)
+                            : null;
+                return knownNameSelector is not null;
+            }
+        }
+
+        bool IsReservedStandaloneToken(string candidate)
+        {
+            if (ThresholdEntries.Any(x => x.Token.Equals(candidate, StringComparison.OrdinalIgnoreCase)) ||
+                DifficultyAliasMap.ContainsKey(candidate) ||
+                CharterAliasMap.ContainsKey(candidate) ||
+                candidate.Equals(RevivalGenreToken, StringComparison.Ordinal) ||
+                GenreAliasMap.ContainsKey(candidate) ||
+                GenreAliasMap.Values.Contains(candidate, StringComparer.Ordinal) ||
+                TryResolveLevel(candidate, out _) ||
+                TryResolveConstant(candidate, out _))
+            {
+                return true;
+            }
+
+            return TryResolvePlate(candidate, out _, out var plateError) || plateError is not null;
+        }
     }
 
     /// <summary>
