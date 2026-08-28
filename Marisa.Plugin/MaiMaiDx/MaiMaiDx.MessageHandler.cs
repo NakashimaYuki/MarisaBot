@@ -364,11 +364,6 @@ public partial class MaiMaiDx
         }
     }
 
-    /// <summary>
-    ///     在后台启动一次完整同步并立即返回。
-    ///     同步需要等待 MSH 调度、用户在游戏内同意好友申请和成绩抓取，可能超过消息处理时限：
-    ///     BotDriver 对每条消息有 10 分钟硬超时，且对话挂起期间会拦截该用户的所有后续消息。
-    /// </summary>
     private static void StartSync(Message message, string friendCode, (string? Lxns, string? DivingFish)? newTokens)
     {
         if (!Syncing.TryAdd(message.Sender.Id, 0))
@@ -423,10 +418,6 @@ public partial class MaiMaiDx
             announced = true;
         }
 
-        // 第一阶段：轮询登录任务等 JWT 下发，直到拿到 token / 失败 / 超时。
-        // routing v2 响应带服务端硬截止时间；旧响应缺失该字段时回退到 15 分钟。
-        // 新版任务模型中登录任务只负责建立好友关系，JWT 在好友关系确认（任务 completed）时下发，
-        // 抓分由第二阶段单独创建的 update_score 任务完成
         MaiScoreHubClient.LoginStatusResult? status = null;
         var waitStart      = DateTime.UtcNow;
         var deadline       = login.DeadlineAt?.UtcDateTime.AddMinutes(1) ?? waitStart.AddMinutes(15);
@@ -444,7 +435,6 @@ public partial class MaiMaiDx
             }
             catch (Exception e)
             {
-                // 容忍偶发的瞬时失败（5xx/超时），连续多次失败才放弃
                 if (++pollFailures < 6) continue;
                 ReplyAt(message, $"同步中断：连续多次查询任务状态失败（{e.Message}）。稍后{retryHint}");
                 return;
@@ -469,7 +459,6 @@ public partial class MaiMaiDx
                 return;
             }
 
-            // routing v2 在创建时就会分配 Bot；只有进入 wait_acceptance 才能确认好友申请已经发出
             if (!announced && status.Stage == "wait_acceptance" && !string.IsNullOrEmpty(status.BotFriendCode))
             {
                 ReplyAt(message, $"Bot 账号（好友码{status.BotFriendCode}）已发出好友申请，请尽快到 NET 同意。若任务随后超时，按提示重试即可。");

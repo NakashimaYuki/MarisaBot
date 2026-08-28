@@ -10,8 +10,6 @@ namespace Marisa.Plugin.Shared.MaiMaiDx;
 ///     契约见 https://github.com/bakapiano/maimai-score-hub/blob/main/shared/openapi/openapi.yaml
 ///     2026-07 起 MSH 迁移到 /api/v1 并拆分任务模型：登录任务只负责建立好友关系并下发 JWT，
 ///     抓分是独立的 update_score 任务（POST /me/dxnet-jobs），向查分器导出为异步任务需轮询结果。
-///     2026-08 routing v2 会在任务创建时先分配 Bot；只有 friendRequestSentAt 或 wait_acceptance
-///     才表示好友申请已经实际发出。
 /// </summary>
 public class MaiScoreHubClient
 {
