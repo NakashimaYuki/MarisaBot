@@ -366,7 +366,7 @@ public partial class MaiMaiDx
 
     /// <summary>
     ///     在后台启动一次完整同步并立即返回。
-    ///     同步需要等待用户在游戏内同意好友申请（最长 10 分钟），不能阻塞消息处理管线：
+    ///     同步需要等待 MSH 调度、用户在游戏内同意好友申请和成绩抓取，可能超过消息处理时限：
     ///     BotDriver 对每条消息有 10 分钟硬超时，且对话挂起期间会拦截该用户的所有后续消息。
     /// </summary>
     private static void StartSync(Message message, string friendCode, (string? Lxns, string? DivingFish)? newTokens)
@@ -417,21 +417,21 @@ public partial class MaiMaiDx
 
         var login = await msh.LoginRequestAsync(friendCode);
         var announced = false;
-        if (!string.IsNullOrEmpty(login.BotFriendCode))
+        if (login.FriendRequestSent && !string.IsNullOrEmpty(login.BotFriendCode))
         {
-            ReplyAt(message, $"Bot 账号（好友码{login.BotFriendCode}）已发出好友申请，请尽快到 NET 同意。服务繁忙时申请可能排队，若超时按提示重试即可。");
+            ReplyAt(message, $"Bot 账号（好友码{login.BotFriendCode}）已发出好友申请，请尽快到 NET 同意。若任务随后超时，按提示重试即可。");
             announced = true;
         }
 
         // 第一阶段：轮询登录任务等 JWT 下发，直到拿到 token / 失败 / 超时。
-        // MSH 繁忙时 send_request 阶段排队可达数分钟，故总超时放宽到 15 分钟。
+        // routing v2 响应带服务端硬截止时间；旧响应缺失该字段时回退到 15 分钟。
         // 新版任务模型中登录任务只负责建立好友关系，JWT 在好友关系确认（任务 completed）时下发，
         // 抓分由第二阶段单独创建的 update_score 任务完成
         MaiScoreHubClient.LoginStatusResult? status = null;
         var waitStart      = DateTime.UtcNow;
-        var deadline       = waitStart.AddMinutes(15);
+        var deadline       = login.DeadlineAt?.UtcDateTime.AddMinutes(1) ?? waitStart.AddMinutes(15);
         var pollFailures   = 0;
-        var sawAcceptance  = false;
+        var sawAcceptance  = login.FriendRequestSent;
         var queuedNotified = false;
         while (DateTime.UtcNow < deadline)
         {
@@ -444,26 +444,35 @@ public partial class MaiMaiDx
             }
             catch (Exception e)
             {
-                // 退避轮询下 15 分钟约 60 次，容忍偶发的瞬时失败（5xx/超时），连续多次失败才放弃
+                // 容忍偶发的瞬时失败（5xx/超时），连续多次失败才放弃
                 if (++pollFailures < 6) continue;
                 ReplyAt(message, $"同步中断：连续多次查询任务状态失败（{e.Message}）。稍后{retryHint}");
                 return;
             }
 
+            if (status.FriendRequestSent) sawAcceptance = true;
+
             if (status.Done || !string.IsNullOrEmpty(status.Token)) break;
 
             if (status.Status is "failed" or "canceled")
             {
-                ReplyAt(message, $"同步失败：{status.Message ?? status.Status}。{retryHint}");
+                if (status.DeadlineExceeded)
+                {
+                    ReplyAt(message, sawAcceptance
+                        ? $"同步失败：MSH 好友验证任务已超过服务端截止时间，好友申请虽已发出，但未能及时确认好友关系。稍后{retryHint}"
+                        : $"同步失败：MSH 未能在服务端截止前发出好友申请（服务排队超时，与你是否同意无关）。稍后{retryHint}");
+                }
+                else
+                {
+                    ReplyAt(message, $"同步失败：{status.Message ?? status.Status}。{retryHint}");
+                }
                 return;
             }
 
-            if (status.Stage == "wait_acceptance") sawAcceptance = true;
-
-            // 实测 botUserFriendCode 仅在轮询返回的 job 对象中下发（login-request 不携带），在等待好友同意阶段提示一次
+            // routing v2 在创建时就会分配 Bot；只有进入 wait_acceptance 才能确认好友申请已经发出
             if (!announced && status.Stage == "wait_acceptance" && !string.IsNullOrEmpty(status.BotFriendCode))
             {
-                ReplyAt(message, $"Bot 账号（好友码{status.BotFriendCode}）已发出好友申请，请尽快到 NET 同意。服务繁忙时申请可能排队，若超时按提示重试即可。");
+                ReplyAt(message, $"Bot 账号（好友码{status.BotFriendCode}）已发出好友申请，请尽快到 NET 同意。若任务随后超时，按提示重试即可。");
                 announced = true;
             }
 
@@ -503,10 +512,10 @@ public partial class MaiMaiDx
         // 第二阶段：创建独立的抓分任务并等待完成。登录任务不再包含抓分，把登录任务号作为
         // 好友关系凭证传入可立即开始抓分。抓分阶段单独计时：第一阶段需等待好友申请送达并被
         // 接受，繁忙时可能已耗去大部分时间，共用截止时间会使抓分预算所剩无几
-        string crawlJobId;
+        MaiScoreHubClient.JobStartResult crawl;
         try
         {
-            crawlJobId = await msh.CreateUpdateScoreJobAsync(jwt, login.JobId);
+            crawl = await msh.CreateUpdateScoreJobAsync(jwt, login.JobId);
         }
         catch (Exception e)
         {
@@ -514,7 +523,8 @@ public partial class MaiMaiDx
             return;
         }
 
-        deadline = DateTime.UtcNow.AddMinutes(20);
+        var crawlJobId = crawl.JobId;
+        deadline = crawl.DeadlineAt?.UtcDateTime.AddMinutes(1) ?? DateTime.UtcNow.AddMinutes(20);
         var crawlStart = DateTime.UtcNow;
 
         var crawlDone = false;
@@ -543,7 +553,9 @@ public partial class MaiMaiDx
 
             if (job.Status is "failed" or "canceled")
             {
-                ReplyAt(message, $"同步失败：{job.Error ?? job.Status}。{retryHint}");
+                ReplyAt(message, job.DeadlineExceeded
+                    ? $"同步失败：MSH 未能在服务端截止前完成成绩抓取，本次任务已结束。稍后{retryHint}"
+                    : $"同步失败：{job.Error ?? job.Status}。{retryHint}");
                 return;
             }
         }
