@@ -4,12 +4,7 @@ using Flurl.Http;
 namespace Marisa.Plugin.Shared.MaiMaiDx;
 
 /// <summary>
-///     bakapiano 的 maimai-score-hub (MSH) 公开 API 的轻量客户端。
-///     用于 <c>maimai 导</c> 命令把玩家的华立成绩推到他【本人】的水鱼 / 落雪查分器。
-///     MSH 官方开放接入（公开 OpenAPI + 全开 CORS）；我们带一个专门的 User-Agent 表明身份。
-///     契约见 https://github.com/bakapiano/maimai-score-hub/blob/main/shared/openapi/openapi.yaml
-///     2026-07 起 MSH 迁移到 /api/v1 并拆分任务模型：登录任务只负责建立好友关系并下发 JWT，
-///     抓分是独立的 update_score 任务（POST /me/dxnet-jobs），向查分器导出为异步任务需轮询结果。
+///     通过 maimai-score-hub 创建 DXNet 抓分任务，并将结果导出到用户配置的查分器。
 /// </summary>
 public class MaiScoreHubClient
 {
@@ -27,18 +22,58 @@ public class MaiScoreHubClient
     private static IFlurlRequest Authed(string path, string jwt) => Req(path)
         .WithHeader("Authorization", "Bearer " + jwt);
 
-    public sealed record LoginRequestResult(string JobId, string? BotFriendCode, string? AuthToken, string? Message);
+    public sealed record LoginRequestResult(
+        string JobId,
+        string? BotFriendCode,
+        string? AuthToken,
+        string? Message,
+        string? Stage,
+        string? FriendRequestSentAt,
+        string? ErrorCode,
+        DateTimeOffset? DeadlineAt)
+    {
+        public bool FriendRequestSent =>
+            !string.IsNullOrEmpty(FriendRequestSentAt) || Stage == "wait_acceptance";
+    }
 
-    public sealed record LoginStatusResult(bool Done, string Status, string? Stage, string? Token, string? Message, string? BotFriendCode);
+    public sealed record LoginStatusResult(
+        bool Done,
+        string Status,
+        string? Stage,
+        string? Token,
+        string? Message,
+        string? BotFriendCode,
+        string? FriendRequestSentAt,
+        string? ErrorCode,
+        DateTimeOffset? DeadlineAt)
+    {
+        public bool FriendRequestSent =>
+            !string.IsNullOrEmpty(FriendRequestSentAt) || Stage == "wait_acceptance";
+
+        public bool DeadlineExceeded => IsDeadlineExceeded(ErrorCode, Message);
+    }
 
     public sealed record ProfileResult(bool HasLxns, bool HasDivingFish);
 
     public sealed record ExportResult(bool Success, int Exported, int Scores, string? Message);
 
-    public sealed record JobResult(string Status, string? Stage, string? Error);
+    public sealed record JobStartResult(string JobId, DateTimeOffset? DeadlineAt);
+
+    public sealed record JobResult(
+        string Status,
+        string? Stage,
+        string? Error,
+        string? ErrorCode,
+        DateTimeOffset? DeadlineAt)
+    {
+        public bool DeadlineExceeded => IsDeadlineExceeded(ErrorCode, Error);
+    }
 
     private static string? S(JsonElement e, string k) =>
         e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    private static DateTimeOffset? D(JsonElement e, string k) =>
+        DateTimeOffset.TryParse(S(e, k), out var value) ? value : null;
 
     /// <summary>POST /auth/login-requests — 用好友码发起登录任务（Bot 向用户发好友申请）。</summary>
     public async Task<LoginRequestResult> LoginRequestAsync(string friendCode)
@@ -53,14 +88,28 @@ public class MaiScoreHubClient
 
         // Bot 好友码可能位于根级（botFriendCode）或嵌套任务对象（botUserFriendCode，任务被
         // 调度前为空），两处都取
-        var bot = S(root, "botFriendCode");
-        if (bot == null && root.TryGetProperty("job", out var job) && job.ValueKind == JsonValueKind.Object)
+        JsonElement? job = null;
+        if (root.TryGetProperty("job", out var nestedJob) && nestedJob.ValueKind == JsonValueKind.Object)
         {
-            bot = S(job, "botUserFriendCode");
+            job = nestedJob;
         }
 
+        var bot = S(root, "botFriendCode") ?? (job is { } j ? S(j, "botUserFriendCode") : null);
         var authToken = S(root, "authToken") ?? S(root, "token");
-        return new LoginRequestResult(jobId, bot, authToken, S(root, "message"));
+        var stage = (job is { } stageJob ? S(stageJob, "stage") : null) ?? S(root, "stage");
+        var friendRequestSentAt = (job is { } sentJob ? S(sentJob, "friendRequestSentAt") : null) ??
+                                  S(root, "friendRequestSentAt");
+        var errorCode = (job is { } errorJob ? S(errorJob, "errorCode") : null) ?? S(root, "errorCode");
+        var deadlineAt = (job is { } deadlineJob ? D(deadlineJob, "deadlineAt") : null) ?? D(root, "deadlineAt");
+        return new LoginRequestResult(
+            jobId,
+            bot,
+            authToken,
+            S(root, "message"),
+            stage,
+            friendRequestSentAt,
+            errorCode,
+            deadlineAt);
     }
 
     /// <summary>
@@ -78,17 +127,31 @@ public class MaiScoreHubClient
         var status = S(root, "status") ?? "";
         var token  = S(root, "token");
 
-        string? stage = null, error = null, botFriendCode = null;
+        string? stage = null, error = null, botFriendCode = null, friendRequestSentAt = null;
+        string? errorCode = null;
+        DateTimeOffset? deadlineAt = null;
         if (root.TryGetProperty("job", out var job) && job.ValueKind == JsonValueKind.Object)
         {
             stage         = S(job, "stage");
             error         = S(job, "error");
             botFriendCode = S(job, "botUserFriendCode");
+            friendRequestSentAt = S(job, "friendRequestSentAt");
+            errorCode     = S(job, "errorCode");
+            deadlineAt    = D(job, "deadlineAt");
         }
 
         var done = status == "completed" || !string.IsNullOrEmpty(token);
 
-        return new LoginStatusResult(done, status, stage, token, error ?? S(root, "message"), botFriendCode);
+        return new LoginStatusResult(
+            done,
+            status,
+            stage ?? S(root, "stage"),
+            token,
+            error ?? S(root, "message"),
+            botFriendCode ?? S(root, "botUserFriendCode"),
+            friendRequestSentAt ?? S(root, "friendRequestSentAt"),
+            errorCode ?? S(root, "errorCode"),
+            deadlineAt ?? D(root, "deadlineAt"));
     }
 
     /// <summary>
@@ -96,7 +159,7 @@ public class MaiScoreHubClient
     ///     确认后单独创建；friendshipJobId 传刚完成的登录任务号作为好友关系凭证，服务端可
     ///     立即开始抓分而无需等待 Bot 好友列表快照刷新。
     /// </summary>
-    public async Task<string> CreateUpdateScoreJobAsync(string jwt, string friendshipJobId)
+    public async Task<JobStartResult> CreateUpdateScoreJobAsync(string jwt, string friendshipJobId)
     {
         var resp = await Authed("/me/dxnet-jobs", jwt)
             .AllowHttpStatus("400-499")
@@ -113,7 +176,11 @@ public class MaiScoreHubClient
 
         var jobId = S(root, "jobId");
         if (string.IsNullOrEmpty(jobId)) throw new InvalidOperationException("创建抓分任务失败（响应中无任务号）");
-        return jobId!;
+
+        var deadlineAt = root.TryGetProperty("job", out var job) && job.ValueKind == JsonValueKind.Object
+            ? D(job, "deadlineAt")
+            : D(root, "deadlineAt");
+        return new JobStartResult(jobId!, deadlineAt);
     }
 
     /// <summary>GET /me/dxnet-jobs/{jobId}（Bearer）— 查询抓分任务状态。</summary>
@@ -124,7 +191,12 @@ public class MaiScoreHubClient
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        return new JobResult(S(root, "status") ?? "", S(root, "stage"), S(root, "error"));
+        return new JobResult(
+            S(root, "status") ?? "",
+            S(root, "stage"),
+            S(root, "error"),
+            S(root, "errorCode"),
+            D(root, "deadlineAt"));
     }
 
     /// <summary>GET /me（Bearer）— 看 MSH 里已配置了哪些查分器令牌。</summary>
@@ -237,4 +309,7 @@ public class MaiScoreHubClient
         result = new ExportResult(status == "completed", 0, 0, S(job, "error") ?? status);
         return true;
     }
+
+    private static bool IsDeadlineExceeded(string? errorCode, string? error) =>
+        errorCode == "job_deadline_exceeded" || error == "DXNet job deadline exceeded";
 }
