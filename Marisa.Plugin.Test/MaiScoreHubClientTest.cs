@@ -83,7 +83,6 @@ public class MaiScoreHubClientTest
         {
             Assert.That(result.DeadlineExceeded, Is.True);
             Assert.That(result.ErrorCode, Is.Null);
-            Assert.That(result.Message, Is.EqualTo("DXNet job deadline exceeded"));
         });
     }
 

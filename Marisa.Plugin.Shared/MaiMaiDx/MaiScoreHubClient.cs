@@ -26,7 +26,6 @@ public class MaiScoreHubClient
         string JobId,
         string? BotFriendCode,
         string? AuthToken,
-        string? Message,
         string? Stage,
         string? FriendRequestSentAt,
         string? ErrorCode,
@@ -41,33 +40,28 @@ public class MaiScoreHubClient
         string Status,
         string? Stage,
         string? Token,
-        string? Message,
         string? BotFriendCode,
         string? FriendRequestSentAt,
         string? ErrorCode,
-        DateTimeOffset? DeadlineAt)
+        DateTimeOffset? DeadlineAt,
+        bool DeadlineExceeded)
     {
         public bool FriendRequestSent =>
             !string.IsNullOrEmpty(FriendRequestSentAt) || Stage == "wait_acceptance";
-
-        public bool DeadlineExceeded => IsDeadlineExceeded(ErrorCode, Message);
     }
 
     public sealed record ProfileResult(bool HasLxns, bool HasDivingFish);
 
-    public sealed record ExportResult(bool Success, int Exported, int Scores, string? Message);
+    public sealed record ExportResult(bool Success, int Exported, int Scores);
 
     public sealed record JobStartResult(string JobId, DateTimeOffset? DeadlineAt);
 
     public sealed record JobResult(
         string Status,
         string? Stage,
-        string? Error,
         string? ErrorCode,
-        DateTimeOffset? DeadlineAt)
-    {
-        public bool DeadlineExceeded => IsDeadlineExceeded(ErrorCode, Error);
-    }
+        DateTimeOffset? DeadlineAt,
+        bool DeadlineExceeded);
 
     private static string? S(JsonElement e, string k) =>
         e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
@@ -105,7 +99,6 @@ public class MaiScoreHubClient
             jobId,
             bot,
             authToken,
-            S(root, "message"),
             stage,
             friendRequestSentAt,
             errorCode,
@@ -147,11 +140,11 @@ public class MaiScoreHubClient
             status,
             stage ?? S(root, "stage"),
             token,
-            error ?? S(root, "message"),
             botFriendCode ?? S(root, "botUserFriendCode"),
             friendRequestSentAt ?? S(root, "friendRequestSentAt"),
             errorCode ?? S(root, "errorCode"),
-            deadlineAt ?? D(root, "deadlineAt"));
+            deadlineAt ?? D(root, "deadlineAt"),
+            IsDeadlineExceeded(errorCode ?? S(root, "errorCode"), error ?? S(root, "message")));
     }
 
     /// <summary>
@@ -171,7 +164,7 @@ public class MaiScoreHubClient
 
         if (resp.StatusCode >= 400)
         {
-            throw new InvalidOperationException(S(root, "message") ?? S(root, "error") ?? $"HTTP {resp.StatusCode}");
+            throw new InvalidOperationException($"MSH create update job failed with HTTP {resp.StatusCode}");
         }
 
         var jobId = S(root, "jobId");
@@ -194,9 +187,9 @@ public class MaiScoreHubClient
         return new JobResult(
             S(root, "status") ?? "",
             S(root, "stage"),
-            S(root, "error"),
             S(root, "errorCode"),
-            D(root, "deadlineAt"));
+            D(root, "deadlineAt"),
+            IsDeadlineExceeded(S(root, "errorCode"), S(root, "error")));
     }
 
     /// <summary>GET /me（Bearer）— 看 MSH 里已配置了哪些查分器令牌。</summary>
@@ -210,20 +203,6 @@ public class MaiScoreHubClient
         bool B(string k) => root.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.True;
 
         return new ProfileResult(B("hasLxnsImportToken"), B("hasDivingFishImportToken"));
-    }
-
-    /// <summary>
-    ///     PATCH /me（Bearer）— 设置某查分器的导入令牌。抓分完成后向已配置令牌的查分器
-    ///     推送由本客户端显式触发；不改动 autoUpdate（那是 MSH 的定时自动更新开关，
-    ///     是否开启应由用户在网站上自行决定）。
-    /// </summary>
-    public async Task SetTokenAsync(string jwt, string prober, string token)
-    {
-        object body = prober == "lxns"
-            ? new { lxnsImportToken = token }
-            : new { divingFishImportToken = token };
-
-        await Authed("/me", jwt).PatchJsonAsync(body);
     }
 
     /// <summary>
@@ -243,8 +222,7 @@ public class MaiScoreHubClient
 
         if (resp.StatusCode >= 400)
         {
-            using var err = JsonDocument.Parse(json);
-            return new ExportResult(false, 0, 0, S(err.RootElement, "message") ?? S(err.RootElement, "error") ?? $"HTTP {resp.StatusCode}");
+            return new ExportResult(false, 0, 0);
         }
 
         string exportJobId;
@@ -255,7 +233,7 @@ public class MaiScoreHubClient
             exportJobId = S(root, "exportJobId") ?? "";
         }
 
-        if (exportJobId.Length == 0) return new ExportResult(false, 0, 0, "创建导出任务失败（响应中无任务号）");
+        if (exportJobId.Length == 0) return new ExportResult(false, 0, 0);
 
         // 队列繁忙时导出任务需要排队，容忍偶发的查询失败，最长等待 5 分钟
         var deadline = DateTime.UtcNow.AddMinutes(5);
@@ -272,7 +250,7 @@ public class MaiScoreHubClient
             }
             catch
             {
-                if (++failures >= 6) return new ExportResult(false, 0, 0, "查询导出任务状态失败");
+                if (++failures >= 6) return new ExportResult(false, 0, 0);
                 continue;
             }
 
@@ -280,7 +258,7 @@ public class MaiScoreHubClient
             if (TryParseExportJob(doc.RootElement, prober, out var result)) return result;
         }
 
-        return new ExportResult(false, 0, 0, "导出任务等待超时");
+        return new ExportResult(false, 0, 0);
     }
 
     /// <summary>任务达到终态时解析对应查分器的回执；job 既可能是响应根级也可能嵌套于 job 字段。</summary>
@@ -302,11 +280,11 @@ public class MaiScoreHubClient
             int I(string k) => pr.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : 0;
 
             var ok = S(pr, "status") == "success";
-            result = new ExportResult(ok, I("exported"), I("scores"), S(pr, "message"));
+            result = new ExportResult(ok, I("exported"), I("scores"));
             return true;
         }
 
-        result = new ExportResult(status == "completed", 0, 0, S(job, "error") ?? status);
+        result = new ExportResult(status == "completed", 0, 0);
         return true;
     }
 

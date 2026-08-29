@@ -41,6 +41,10 @@ public record Message
 
     public MessageAuditContext AuditContext => _auditContext ??= MessageAuditContext.FromMessage(this);
 
+    internal MessageSenderProvider SenderProvider => _sender;
+
+    public MessageReplyTarget CaptureReplyTarget() => new(this);
+
     /// <summary>
     ///     消息在哪，群或者私聊
     /// </summary>
