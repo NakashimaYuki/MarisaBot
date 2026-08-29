@@ -21,11 +21,13 @@ public class MarisaPluginBase
         var currentException = Unwrap(exception);
         var dumpPath = TrySaveDump(currentException);
 
-        log.Error($"{exception}\nCaused by message: {message}");
-        if (dumpPath is not null)
-        {
-            log.Error("Exception dump saved to {0}", dumpPath);
-        }
+        log.Error(
+            "event=plugin_exception {0} source={1} error_type={2} hresult={3} dump={4}",
+            message.AuditContext,
+            GetType().FullName ?? GetType().Name,
+            currentException.GetType().FullName ?? currentException.GetType().Name,
+            currentException.HResult,
+            dumpPath is null ? "none" : Path.GetFileName(dumpPath));
 
         if (currentException is MissingConfigurationException missingConfigurationException)
         {
@@ -33,7 +35,7 @@ public class MarisaPluginBase
             return Task.CompletedTask;
         }
 
-        message.Send(new MessageDataText("出现异常，已上报开发者"));
+        message.Send(new MessageDataText($"出现异常，已上报开发者（故障编号：{message.AuditContext.CorrelationId}）"));
 
         return Task.CompletedTask;
 
@@ -41,7 +43,7 @@ public class MarisaPluginBase
         {
             return currentException is MissingConfigurationException
                 ? null
-                : ExceptionDump.Save(currentException, message.ToString(), GetType().FullName);
+                : ExceptionDump.Save(currentException, message.AuditContext, GetType().FullName);
         }
 
         static Exception Unwrap(Exception exception)

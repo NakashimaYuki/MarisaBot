@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Diagnostics;
+using System.Reflection;
 using Marisa.BotDriver.DI;
 using Marisa.BotDriver.DI.Message;
 using Marisa.BotDriver.Entity.Message;
@@ -25,6 +26,7 @@ public abstract class BotDriver(
     private readonly CancellationTokenSource _shutdown = new();
 
     protected CancellationToken ShutdownToken => _shutdown.Token;
+    protected virtual TimeSpan MessageProcessingTimeout => TimeSpan.FromMinutes(10);
 
     /// <summary>
     /// 配置依赖注入
@@ -80,39 +82,67 @@ public abstract class BotDriver(
 
     protected async Task ProcMessageStep(Message message)
     {
+        var audit = message.AuditContext;
+        var started = Stopwatch.GetTimestamp();
+        Logger.Info("event=message_received {0}", audit);
+
         try
         {
-            var res = await Policy.TimeoutAsync(TimeSpan.FromMinutes(10), TimeoutStrategy.Pessimistic).ExecuteAndCaptureAsync(async () =>
+            var res = await Policy.TimeoutAsync(MessageProcessingTimeout, TimeoutStrategy.Pessimistic).ExecuteAndCaptureAsync(async () =>
             {
-                Logger.Info("{0}", message.ToString());
                 var toInvoke = MessageDispatcher.Dispatch(message);
 
                 foreach (var (plugin, method, m2) in toInvoke)
                 {
+                    var handlerStarted = Stopwatch.GetTimestamp();
                     var state = await MessageDispatcher.Invoke(plugin, method, m2);
+                    Logger.Info(
+                        "event=handler_completed {0} plugin={1} handler={2} outcome={3} duration_ms={4:F1}",
+                        audit,
+                        plugin.GetType().FullName ?? plugin.GetType().Name,
+                        method.Name,
+                        state,
+                        Stopwatch.GetElapsedTime(handlerStarted).TotalMilliseconds);
 
                     if (state == MarisaPluginTaskState.CompletedTask) break;
                 }
             });
 
-            if (res.Outcome != OutcomeType.Failure) return;
+            if (res.Outcome != OutcomeType.Failure)
+            {
+                Logger.Info(
+                    "event=message_completed {0} duration_ms={1:F1}",
+                    audit,
+                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                return;
+            }
 
             if (res.FinalException is TimeoutRejectedException)
             {
                 message.Reply("Cancelled due to timeout (10min)");
-                Logger.Error("Handler timed out. Caused by message: {0}", message);
+                Logger.Error(
+                    "event=message_timeout {0} duration_ms={1:F1}",
+                    audit,
+                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
             else
             {
-                // 分发/触发匹配阶段（不在 DependencyInjectInvoke 的 try/catch 内）抛出的异常：
-                // 记录而非抛回无人 await 的任务，否则会被静默丢弃
-                Logger.Error(res.FinalException, "Dispatch failed. Caused by message: {0}", message);
+                Logger.Error(
+                    "event=dispatch_failed {0} error_type={1} hresult={2} duration_ms={3:F1}",
+                    audit,
+                    res.FinalException?.GetType().FullName ?? "unknown",
+                    res.FinalException?.HResult ?? 0,
+                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
         }
         catch (Exception e)
         {
-            // 兜底：本任务是即发即弃的，任何逃逸异常都必须在此消化，避免成为未观测异常
-            Logger.Error(e, "Unexpected error while processing message: {0}", message);
+            Logger.Error(
+                "event=message_failed {0} error_type={1} hresult={2} duration_ms={3:F1}",
+                audit,
+                e.GetType().FullName ?? e.GetType().Name,
+                e.HResult,
+                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
     }
 

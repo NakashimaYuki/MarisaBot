@@ -46,7 +46,7 @@ public class NapCatBackend : BotDriver.BotDriver
         _logger   = LogManager.GetCurrentClassLogger();
         _dict     = dict;
         _config   = ConfigurationManager.Configuration.NapCat;
-        _endpoint = BuildEndpoint(string.IsNullOrWhiteSpace(_config.Endpoint) ? "ws://127.0.0.1:3001" : _config.Endpoint, _config.Token);
+        _endpoint = BuildEndpoint(string.IsNullOrWhiteSpace(_config.Endpoint) ? "ws://127.0.0.1:3001" : _config.Endpoint);
 
         if (long.TryParse(_config.SelfId, out var selfId))
         {
@@ -117,17 +117,24 @@ public class NapCatBackend : BotDriver.BotDriver
             }
             catch (Exception ex) when (IsUnavailableGroupFailure(s, ex))
             {
-                _logger.Warn(ex, $"Skipped sending group message to unavailable group {s.ReceiverId}: {s.MessageChain}");
+                _logger.Warn(
+                    "event=napcat_send_skipped {0} error_type={1}",
+                    OutboundAudit(s.MessageChain, s.Type, s.ReceiverId, s.GroupId),
+                    ex.GetType().FullName ?? ex.GetType().Name);
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, $"Failed to send {s.Type} to {DescribeTarget(s)}: {s.MessageChain}");
+                _logger.Error(
+                    "event=napcat_send_failed {0} error_type={1} hresult={2}",
+                    OutboundAudit(s.MessageChain, s.Type, s.ReceiverId, s.GroupId),
+                    ex.GetType().FullName ?? ex.GetType().Name,
+                    ex.HResult);
             }
         }
 
         async Task SendGroupMessage(MessageChain message, long target, long? quote = null)
         {
-            _logger.Info($"{target} <= {message}");
+            _logger.Info("event=napcat_send {0}", OutboundAudit(message, MessageType.GroupMessage, target, null));
             await SendAction("send_group_msg", new Dictionary<string, object?>
             {
                 ["group_id"] = target.ToString(),
@@ -137,7 +144,7 @@ public class NapCatBackend : BotDriver.BotDriver
 
         async Task SendFriendMessage(MessageChain message, long target, long? quote = null)
         {
-            _logger.Info($"{target} <- {message}");
+            _logger.Info("event=napcat_send {0}", OutboundAudit(message, MessageType.FriendMessage, target, null));
             await SendAction("send_private_msg", new Dictionary<string, object?>
             {
                 ["user_id"] = target.ToString(),
@@ -147,7 +154,7 @@ public class NapCatBackend : BotDriver.BotDriver
 
         async Task SendTempMessage(MessageChain message, long target, long? groupId, long? quote = null)
         {
-            _logger.Info($"{target} <-[temp:{groupId}] {message}");
+            _logger.Info("event=napcat_send {0}", OutboundAudit(message, MessageType.TempMessage, target, groupId));
 
             // OneBot keeps temporary sessions on send_private_msg with an optional group_id context.
             // NapCat accepts this shape for private.group events reported from group temporary sessions.
@@ -172,19 +179,17 @@ public class NapCatBackend : BotDriver.BotDriver
                 return false;
             }
 
-            return ex.Message.Contains("你已被移出该群", StringComparison.Ordinal) ||
-                   ex.Message.Contains("群聊不存在", StringComparison.Ordinal) ||
-                   ex.Message.Contains("\"result\": 110", StringComparison.Ordinal) ||
-                   ex.Message.Contains("\"result\":110", StringComparison.Ordinal);
+            return ex is NapCatActionException { IsUnavailableGroup: true };
         }
 
-        static string DescribeTarget(MessageToSend s)
+        static string OutboundAudit(MessageChain message, MessageType type, long target, long? groupId)
         {
-            return s.Type switch
-            {
-                MessageType.TempMessage => $"user {s.ReceiverId} (temp group {s.GroupId?.ToString() ?? "?"})",
-                _ => s.ReceiverId.ToString()
-            };
+            var targetRef = MessageAuditContext.Pseudonymize($"napcat-target:{type}", target);
+            var groupRef = groupId is null
+                ? "none"
+                : MessageAuditContext.Pseudonymize("napcat-temp-group", groupId.Value);
+            return $"type={type} target_ref={targetRef} group_ref={groupRef} " +
+                   $"segments={MessageAuditContext.SummarizeSegments(message)}";
         }
     }
 
@@ -216,7 +221,10 @@ public class NapCatBackend : BotDriver.BotDriver
         }
         catch (Exception ex)
         {
-            _logger.Warn(ex, "Failed to initialize NapCat login info; set napCat.selfId if @ triggers are needed before the first message");
+            _logger.Warn(
+                "event=napcat_login_info_failed error_type={0} hresult={1}",
+                ex.GetType().FullName ?? ex.GetType().Name,
+                ex.HResult);
         }
     }
 
@@ -251,7 +259,10 @@ public class NapCatBackend : BotDriver.BotDriver
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "NapCat WebSocket receive loop failed; reconnecting in 5 seconds");
+                _logger.Error(
+                    "event=napcat_receive_failed error_type={0} hresult={1} retry_seconds=5",
+                    ex.GetType().FullName ?? ex.GetType().Name,
+                    ex.HResult);
                 FailPendingActions(ex);
                 CloseSocket();
                 await Task.Delay(TimeSpan.FromSeconds(5), ShutdownToken);
@@ -327,7 +338,7 @@ public class NapCatBackend : BotDriver.BotDriver
             default:
                 if (postType is not null)
                 {
-                    _logger.Debug($"Not implemented NapCat event: `{root.GetRawText()}`");
+                    _logger.Debug("event=napcat_event_ignored");
                 }
 
                 break;
@@ -693,7 +704,7 @@ public class NapCatBackend : BotDriver.BotDriver
 
             if (ReadString(response, "status") != "ok" || ReadLong(response, "retcode", 0) != 0)
             {
-                throw new InvalidOperationException($"NapCat action `{action}` failed: {response.GetRawText()}");
+                throw CreateActionException(action, response);
             }
 
             return response.TryGetProperty("data", out var data) ? data.Clone() : default;
@@ -783,12 +794,16 @@ public class NapCatBackend : BotDriver.BotDriver
 
                     await socket.ConnectAsync(_endpoint, ShutdownToken);
                     _socket = socket;
-                    _logger.Info($"Connected to NapCat OneBot WebSocket: {_endpoint}");
+                    _logger.Info("event=napcat_connected endpoint={0}", EndpointForLog(_endpoint));
                     return;
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn(ex, $"Failed to connect NapCat OneBot WebSocket {_endpoint}; retrying in 5 seconds");
+                    _logger.Warn(
+                        "event=napcat_connect_failed endpoint={0} error_type={1} hresult={2} retry_seconds=5",
+                        EndpointForLog(_endpoint),
+                        ex.GetType().FullName ?? ex.GetType().Name,
+                        ex.HResult);
                     await Task.Delay(TimeSpan.FromSeconds(5), ShutdownToken);
                 }
             }
@@ -824,12 +839,44 @@ public class NapCatBackend : BotDriver.BotDriver
         _dict["QQ"] = selfId;
     }
 
-    private static Uri BuildEndpoint(string endpoint, string? token)
+    private static Uri BuildEndpoint(string endpoint)
     {
-        if (string.IsNullOrEmpty(token)) return new Uri(endpoint);
+        return new Uri(endpoint);
+    }
 
-        var separator = endpoint.Contains('?') ? '&' : '?';
-        return new Uri($"{endpoint}{separator}access_token={Uri.EscapeDataString(token)}");
+    private static string EndpointForLog(Uri endpoint)
+    {
+        var sanitized = new UriBuilder(endpoint)
+        {
+            UserName = string.Empty,
+            Password = string.Empty,
+            Query = string.Empty,
+            Fragment = string.Empty
+        };
+        return sanitized.Uri.GetLeftPart(UriPartial.Path);
+    }
+
+    private static NapCatActionException CreateActionException(string action, JsonElement response)
+    {
+        var retCode = ReadLong(response, "retcode", 0);
+        var resultCode = response.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object
+            ? ReadLong(data, "result", 0)
+            : 0;
+        var wording = ReadString(response, "message") ?? ReadString(response, "wording") ?? string.Empty;
+        var unavailableGroup = resultCode == 110 ||
+                               wording.Contains("你已被移出该群", StringComparison.Ordinal) ||
+                               wording.Contains("群聊不存在", StringComparison.Ordinal);
+        return new NapCatActionException(action, retCode, resultCode, unavailableGroup);
+    }
+
+    private sealed class NapCatActionException(
+        string action,
+        long retCode,
+        long resultCode,
+        bool isUnavailableGroup)
+        : InvalidOperationException($"NapCat action `{action}` failed with retcode {retCode} and result {resultCode}")
+    {
+        public bool IsUnavailableGroup { get; } = isUnavailableGroup;
     }
 
     private static string? ReadString(JsonElement element, string name)

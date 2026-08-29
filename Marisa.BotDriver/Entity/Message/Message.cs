@@ -7,6 +7,7 @@ namespace Marisa.BotDriver.Entity.Message;
 public record Message
 {
     private readonly MessageSenderProvider _sender;
+    private MessageAuditContext? _auditContext;
 
     public readonly MessageChain? MessageChain;
 
@@ -37,6 +38,8 @@ public record Message
 
     public MessageDataId MessageId =>
         (MessageChain!.Messages.FirstOrDefault(m => m.Type == MessageDataType.Id) as MessageDataId)!;
+
+    public MessageAuditContext AuditContext => _auditContext ??= MessageAuditContext.FromMessage(this);
 
     /// <summary>
     ///     消息在哪，群或者私聊
@@ -79,9 +82,7 @@ public record Message
 
     public override string ToString()
     {
-        return GroupInfo == null
-            ? $"[{Type}] {Sender.Name} ({Sender.Id}) => {MessageChain}"
-            : $"[{Type}] {Sender.Name} ({Sender.Id}) -> {GroupInfo?.Name ?? "Unknown"} ({GroupInfo?.Id ?? 0}) => {MessageChain}";
+        return AuditContext.ToString();
     }
 
     #region Reply

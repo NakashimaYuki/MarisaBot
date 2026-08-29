@@ -33,9 +33,30 @@ public class ExceptionDumpTest
     }
 
     [Test]
-    public void Save_Should_Write_Exception_And_Related_Message_To_Temp_Root()
+    public void Save_Should_Write_Safe_Exception_Metadata_Without_Messages()
     {
-        var path = ExceptionDump.Save(new InvalidOperationException("boom"), "test message", "unit-test");
+        const string sentinel = "SECRET_SENTINEL";
+        var queue = new MessageQueueProvider();
+        var sender = new MessageSenderProvider(queue);
+        var message = new Message(new MessageChain(
+            new MessageDataId(1, 0),
+            new MessageDataText(sentinel)), sender)
+        {
+            Type = MessageType.FriendMessage,
+            Sender = new SenderInfo(114514, "tester")
+        };
+
+        Exception exception;
+        try
+        {
+            throw new InvalidOperationException(sentinel, new ArgumentException(sentinel));
+        }
+        catch (Exception caught)
+        {
+            exception = caught;
+        }
+
+        var path = ExceptionDump.Save(exception, message.AuditContext, "unit-test");
 
         Assert.That(path, Is.Not.Null);
         Assert.That(NormalizePath(path!), Does.StartWith(NormalizePath(Path.Join(_tempRoot, "exceptions"))));
@@ -45,9 +66,12 @@ public class ExceptionDumpTest
         Assert.Multiple(() =>
         {
             Assert.That(content, Does.Contain("InvalidOperationException"));
-            Assert.That(content, Does.Contain("boom"));
-            Assert.That(content, Does.Contain("test message"));
+            Assert.That(content, Does.Contain("ArgumentException"));
             Assert.That(content, Does.Contain("unit-test"));
+            Assert.That(content, Does.Contain(message.AuditContext.CorrelationId));
+            Assert.That(content, Does.Not.Contain(sentinel));
+            Assert.That(content, Does.Not.Contain("RelatedMessage"));
+            Assert.That(content, Does.Not.Contain("Detail"));
         });
 
         static string NormalizePath(string value) =>
@@ -74,7 +98,7 @@ public class ExceptionDumpTest
 
         Assert.Multiple(() =>
         {
-            Assert.That(text, Is.EqualTo("出现异常，已上报开发者"));
+            Assert.That(text, Does.StartWith("出现异常，已上报开发者（故障编号："));
             Assert.That(text, Does.Not.Contain("boom"));
             Assert.That(text, Does.Not.Contain("InvalidOperationException"));
         });
