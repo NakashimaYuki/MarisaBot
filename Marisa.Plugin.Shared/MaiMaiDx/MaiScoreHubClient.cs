@@ -3,6 +3,14 @@ using Flurl.Http;
 
 namespace Marisa.Plugin.Shared.MaiMaiDx;
 
+public sealed class MaiScoreHubApiException(int statusCode, string? errorCode, string message) : Exception(message)
+{
+    public int StatusCode { get; } = statusCode;
+    public string? ErrorCode { get; } = errorCode;
+    public bool IsTransientLoginFailure =>
+        errorCode is "cabinet_bot_unavailable" or "bot_assignment_busy" || statusCode == 503;
+}
+
 /// <summary>
 ///     通过 maimai-score-hub 创建 DXNet 抓分任务，并将结果导出到用户配置的查分器。
 /// </summary>
@@ -78,13 +86,16 @@ public class MaiScoreHubClient
     /// <summary>POST /auth/login-requests — 用好友码发起登录任务（Bot 向用户发好友申请）。</summary>
     public async Task<LoginRequestResult> LoginRequestAsync(string friendCode)
     {
-        var json = await Req("/auth/login-requests")
-            .PostJsonAsync(new { friendCode, method = "bot_sends_request" })
-            .ReceiveString();
+        var response = await Req("/auth/login-requests")
+            .AllowAnyHttpStatus()
+            .PostJsonAsync(new { friendCode, method = "bot_sends_request" });
+        var json = await response.GetStringAsync();
+        if (response.StatusCode >= 400) throw LoginRequestError(response.StatusCode, json);
 
         using var doc = JsonDocument.Parse(json);
         var root  = doc.RootElement;
         var jobId = S(root, "jobId") ?? "";
+        if (jobId.Length == 0) throw new InvalidOperationException("MSH 登录响应缺少任务编号");
 
         // Bot 好友码可能位于根级（botFriendCode）或嵌套任务对象（botUserFriendCode，任务被
         // 调度前为空），两处都取
@@ -110,6 +121,31 @@ public class MaiScoreHubClient
             friendRequestSentAt,
             errorCode,
             deadlineAt);
+
+        static MaiScoreHubApiException LoginRequestError(int statusCode, string body)
+        {
+            string? errorCode = null;
+            string? serverMessage = null;
+            try
+            {
+                using var error = JsonDocument.Parse(body);
+                errorCode = S(error.RootElement, "code");
+                serverMessage = S(error.RootElement, "message") ?? S(error.RootElement, "error");
+            }
+            catch (JsonException)
+            {
+            }
+
+            var message = errorCode switch
+            {
+                "cabinet_bot_unavailable" => "MSH 当前没有可用的 Bot 账号",
+                "bot_assignment_busy" => "MSH 正在分配 Bot 账号",
+                _ when serverMessage == "Validation failed" => "MSH 拒绝了登录请求（参数验证失败）",
+                _ when !string.IsNullOrWhiteSpace(serverMessage) => $"MSH 拒绝了登录请求：{serverMessage}",
+                _ => $"MSH 登录请求失败（HTTP {statusCode}）"
+            };
+            return new MaiScoreHubApiException(statusCode, errorCode, message);
+        }
     }
 
     /// <summary>

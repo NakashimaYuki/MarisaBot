@@ -226,6 +226,9 @@ public partial class MaiMaiDx
 
     #region 推分同步（导）
 
+    private const int LoginRequestMaxAttempts = 4;
+    private const int LoginRequestRetryDelayMs = 5000;
+
     private const string UsageText =
         "用法：\n" +
         "mai 导 —— 同步成绩到查分器（首次使用会引导设置）\n" +
@@ -488,7 +491,7 @@ public partial class MaiMaiDx
 
         ReplyAt(message, "正在发送请求…");
 
-        var login = await msh.LoginRequestAsync(friendCode);
+        var login = await CreateLoginRequest();
         var announced = false;
         if (login.FriendRequestSent && !string.IsNullOrEmpty(login.BotFriendCode))
         {
@@ -664,6 +667,21 @@ public partial class MaiMaiDx
         }
 
         ReplyAt(message, sb.ToString().TrimEnd());
+
+        async Task<MaiScoreHubClient.LoginRequestResult> CreateLoginRequest()
+        {
+            for (var attempt = 1;; attempt++)
+            {
+                try
+                {
+                    return await msh.LoginRequestAsync(friendCode);
+                }
+                catch (MaiScoreHubApiException e) when (e.IsTransientLoginFailure && attempt < LoginRequestMaxAttempts)
+                {
+                    await Task.Delay(LoginRequestRetryDelayMs);
+                }
+            }
+        }
     }
 
     #endregion

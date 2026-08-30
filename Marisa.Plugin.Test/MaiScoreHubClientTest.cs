@@ -1,8 +1,14 @@
 using System;
+using System.Reflection;
 using System.Threading.Tasks;
 using Flurl.Http.Testing;
+using Marisa.BotDriver.DI.Message;
+using Marisa.BotDriver.Entity.Message;
+using Marisa.BotDriver.Entity.MessageData;
+using Marisa.BotDriver.Entity.MessageSender;
 using Marisa.Plugin.Shared.MaiMaiDx;
 using NUnit.Framework;
+using MaiMaiDxPlugin = Marisa.Plugin.MaiMaiDx.MaiMaiDx;
 
 namespace Marisa.Plugin.Test;
 
@@ -59,6 +65,102 @@ public class MaiScoreHubClientTest
         var result = await new MaiScoreHubClient().LoginRequestAsync(FriendCode);
 
         Assert.That(result.FriendRequestSent, Is.True);
+    }
+
+    [Test]
+    public void LoginRequest_CapacityFailure_IsStructuredAndRetryable()
+    {
+        using var http = new HttpTest();
+        http.RespondWithJson(new
+        {
+            statusCode = 400,
+            code = "cabinet_bot_unavailable",
+            message = "Bot friend capacity is exhausted"
+        }, 400);
+
+        var error = Assert.ThrowsAsync<MaiScoreHubApiException>(async () =>
+            await new MaiScoreHubClient().LoginRequestAsync(FriendCode));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.StatusCode, Is.EqualTo(400));
+            Assert.That(error.ErrorCode, Is.EqualTo("cabinet_bot_unavailable"));
+            Assert.That(error.IsTransientLoginFailure, Is.True);
+            Assert.That(error.Message, Is.EqualTo("MSH 当前没有可用的 Bot 账号"));
+        });
+    }
+
+    [Test]
+    public void LoginRequest_ValidationFailure_IsNotRetryable()
+    {
+        using var http = new HttpTest();
+        http.RespondWithJson(new
+        {
+            statusCode = 400,
+            message = "Validation failed"
+        }, 400);
+
+        var error = Assert.ThrowsAsync<MaiScoreHubApiException>(async () =>
+            await new MaiScoreHubClient().LoginRequestAsync(FriendCode));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.IsTransientLoginFailure, Is.False);
+            Assert.That(error.Message, Is.EqualTo("MSH 拒绝了登录请求（参数验证失败）"));
+        });
+    }
+
+    [Test]
+    public void LoginRequest_AssignmentBusy_IsRetryable()
+    {
+        using var http = new HttpTest();
+        http.RespondWithJson(new
+        {
+            statusCode = 503,
+            code = "bot_assignment_busy",
+            message = "Bot assignment is busy; retry after 5 seconds"
+        }, 503);
+
+        var error = Assert.ThrowsAsync<MaiScoreHubApiException>(async () =>
+            await new MaiScoreHubClient().LoginRequestAsync(FriendCode));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.StatusCode, Is.EqualTo(503));
+            Assert.That(error.IsTransientLoginFailure, Is.True);
+            Assert.That(error.Message, Is.EqualTo("MSH 正在分配 Bot 账号"));
+        });
+    }
+
+    [Test]
+    public void Sync_RetriesTransientLoginFailure()
+    {
+        using var http = new HttpTest();
+        http.RespondWithJson(new
+        {
+            statusCode = 400,
+            code = "cabinet_bot_unavailable",
+            message = "Bot friend capacity is exhausted"
+        }, 400);
+        http.RespondWithJson(new
+        {
+            statusCode = 400,
+            message = "Validation failed"
+        }, 400);
+
+        var queue = new MessageQueueProvider();
+        var sender = new MessageSenderProvider(queue);
+        var message = new Message(new MessageChain(new MessageDataText("mai sync")), sender)
+        {
+            Type = MessageType.FriendMessage,
+            Sender = new SenderInfo(1001, "tester")
+        };
+        var runSync = typeof(MaiMaiDxPlugin).GetMethod("RunSync", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var task = (Task)runSync.Invoke(null, [message, FriendCode, null])!;
+
+        var error = Assert.ThrowsAsync<MaiScoreHubApiException>(async () => await task);
+
+        Assert.That(error!.Message, Is.EqualTo("MSH 拒绝了登录请求（参数验证失败）"));
     }
 
     [Test]
