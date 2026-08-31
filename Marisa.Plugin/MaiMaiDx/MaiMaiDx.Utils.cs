@@ -77,6 +77,49 @@ public partial class MaiMaiDx
 
     #endregion
 
+    #region value analysis
+
+    private static bool TryParseValueAnalysisCommand(
+        ReadOnlyMemory<char> command,
+        out MaiValueAnalysisMode mode,
+        out MaiAchievementRank? rank)
+    {
+        mode = default;
+        rank = null;
+        var compact = string.Concat(command.ToString().Where(c => !char.IsWhiteSpace(c))).Replace('＋', '+');
+
+        const string goldSuffix = "含金量分析";
+        const string waterSuffix = "水分分析";
+        string rankToken;
+        if (compact.EndsWith(goldSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            mode      = MaiValueAnalysisMode.Gold;
+            rankToken = compact[..^goldSuffix.Length];
+        }
+        else if (compact.EndsWith(waterSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            mode      = MaiValueAnalysisMode.Water;
+            rankToken = compact[..^waterSuffix.Length];
+        }
+        else
+        {
+            return false;
+        }
+
+        if (rankToken.Length == 0) return true;
+        if (!MaiAchievementRanks.TryParse(rankToken, out var parsed)) return false;
+
+        rank = parsed;
+        return true;
+    }
+
+    private static bool RankedValueAnalysisTrigger(Message message, IServiceProvider _serviceProvider)
+    {
+        return TryParseValueAnalysisCommand(message.Command, out _, out var rank) && rank != null;
+    }
+
+    #endregion
+
     #region recommend
 
     private MaiMaiRecommendationEngine CreateRecommendationEngine()

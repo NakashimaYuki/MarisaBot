@@ -209,6 +209,11 @@ public static class WebApi
         return await RenderUrl($"/maimai/curve-rank?{kind}={Uri.EscapeDataString(value)}");
     }
 
+    public static async Task<string> MaiMaiValueAnalysis(Guid contextId)
+    {
+        return await RenderUrl("/maimai/value-analysis?id=" + contextId);
+    }
+
     public static async Task<string> MaiMaiDanCourse(string version, string dani)
     {
         return await RenderUrl("/maimai/dan-course?ver=" + version + "&dani=" + Uri.EscapeDataString(dani));
