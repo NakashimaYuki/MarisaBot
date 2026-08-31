@@ -1,6 +1,6 @@
 <template>
     <MaiCardShell v-if="data" class="value-analysis" :bg-key="bgKey" :accent="accent" :width="1180" pad-bottom="pb-8">
-        <header class="flex items-end justify-between gap-8">
+        <header>
             <div>
                 <div class="eyebrow">MAIMAI DX · VALUE ANALYSIS</div>
                 <div class="mt-2 flex items-center gap-4">
@@ -8,7 +8,6 @@
                     <span class="scope-chip">{{ data.Scope }}</span>
                 </div>
             </div>
-            <div class="mode-mark" :style="{ color: accent, borderColor: accent }">{{ modeMark }}</div>
         </header>
 
         <section class="overview mt-6">
@@ -174,7 +173,6 @@ const stats = computed(() => data.value!.Statistics)
 const isGold = computed(() => data.value?.Mode === 'gold')
 const title = computed(() => isGold.value ? '含金量分析' : '水分分析')
 const listTitle = computed(() => isGold.value ? '含金谱面 TOP 10' : '水分谱面 TOP 10')
-const modeMark = computed(() => isGold.value ? 'GOLD' : 'WATER')
 const accent = computed(() => isGold.value ? '#f5c451' : '#5ed4ff')
 const bgKey = bgKeyOf(3, false)
 const columns = computed(() => [data.value!.TopCharts.slice(0, 5), data.value!.TopCharts.slice(5, 10)])
@@ -227,8 +225,6 @@ async function preload(payload: AnalysisData) {
 .eyebrow { font-family: 'Torus',sans-serif; font-size: 14px; font-weight: 800; letter-spacing: 0.28em; color: rgba(255,255,255,0.48); }
 h1 { font-family: 'Microsoft YaHei',sans-serif; font-size: 38px; font-weight: 900; letter-spacing: 0.02em; text-shadow: 0 3px 8px rgba(0,0,0,0.45); }
 .scope-chip { padding: 5px 14px; border: 1px solid rgba(255,255,255,0.2); border-radius: 9999px; background: rgba(255,255,255,0.08); font-family: 'Torus','Microsoft YaHei',sans-serif; font-size: 14px; font-weight: 800; }
-.mode-mark { padding: 7px 18px; border: 2px solid; border-radius: 10px; font-family: 'Torus',sans-serif; font-size: 17px; font-weight: 900; letter-spacing: 0.2em; background: rgba(0,0,0,0.2); }
-
 .overview { display: flex; gap: 18px; }
 .player-panel { width: 292px; min-height: 188px; padding: 20px 22px; border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; background: rgba(5,7,18,0.48); }
 .player-label { font-family: 'Torus',sans-serif; font-size: 11px; font-weight: 800; letter-spacing: 0.25em; color: rgba(255,255,255,0.42); }
