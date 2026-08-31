@@ -47,9 +47,9 @@
           `divingFish.redirectUri`，回调路径为 `/oauth/callback/divingfish`
         - `divingFish.devToken` 只用于旧接口过渡；水鱼计划于 **2026-10-01** 退役 DevToken 接口，
           新部署不应再依赖它
-    - 配置 Marisa 连接 NapCat（需要与 NapCat 配置一致）：
+    - 配置 Marisa 连接 OneBot 后端（需要与 NapCat 等框架的 OneBot 配置一致）：
         ```yaml
-        napCat:
+        onebot:
           endpoint: ws://127.0.0.1:31001
           token: 这里填写你的连接密钥
           selfId: 你的机器人QQ号

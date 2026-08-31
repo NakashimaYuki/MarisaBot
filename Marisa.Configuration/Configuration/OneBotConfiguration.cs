@@ -2,7 +2,7 @@
 
 namespace Marisa.Configuration;
 
-public class NapCatConfiguration
+public class OneBotConfiguration
 {
     public string Endpoint { get; set; }
     public string Token { get; set; }

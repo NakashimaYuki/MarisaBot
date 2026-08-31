@@ -1,4 +1,4 @@
-﻿using Marisa.Backend.NapCat;
+﻿using Marisa.Backend.OneBot;
 using Marisa.BotDriver.DI;
 using Marisa.BotDriver.Entity.Message;
 using Marisa.BotDriver.Entity.MessageData;
@@ -30,7 +30,7 @@ public class DispatcherTest
 
         ConfigurationManager.SetConfigFilePath(_configPath);
 
-        var sc = NapCatBackend.Config(Utils.Assembly().GetTypes());
+        var sc = OneBotBackend.Config(Utils.Assembly().GetTypes());
 
         _provider = sc.BuildServiceProvider();
 

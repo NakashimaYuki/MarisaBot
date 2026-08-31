@@ -7,7 +7,7 @@ web:
   private:  localhost:14311
   public:
 
-napCat:
+onebot:
   endpoint: ws://127.0.0.1:31001
   token:
   selfId:
@@ -43,17 +43,17 @@ chunithm:
   tokenLouis:
   rinNetKeyChip:
   allNetKeyChip:
-  
+
 ongeki:
   resourcePath: ongeki
   tempPath:     ongeki
 
 maimai:
   secret:
-    maiSalt:    
-    aimeSalt:   
-    aesKey:     
-    aesIv:      
+    maiSalt:
+    aimeSalt:
+    aesKey:
+    aesIv:
   resourcePath: maimai
   tempPath:     maimai
   beatMapPath:

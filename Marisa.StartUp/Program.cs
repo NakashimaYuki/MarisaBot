@@ -1,7 +1,7 @@
 ﻿
 using System.Text;
 using System.Diagnostics;
-using Marisa.Backend.NapCat;
+using Marisa.Backend.OneBot;
 using Marisa.Configuration;
 using Marisa.Plugin;
 using Marisa.Plugin.Shared.Util;
@@ -30,7 +30,7 @@ public static class Program
         builder.Services.AddSwaggerGen();
         builder.Services.ConfigLogger();
         var config = ConfigurationManager.Configuration;
-        foreach (var service in NapCatBackend.Config(Utils.Assembly().GetTypes()))
+        foreach (var service in OneBotBackend.Config(Utils.Assembly().GetTypes()))
             builder.Services.Add(service);
         builder.WebHost.UseUrls(config.Web.PrivateBaseUrl);
 

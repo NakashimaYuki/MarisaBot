@@ -118,7 +118,7 @@ public static class ConfigurationManager
     private static void EnsureRequiredSections(PluginConfiguration config)
     {
         config.Web ??= new WebConfiguration();
-        config.NapCat ??= new NapCatConfiguration();
+        config.OneBot ??= new OneBotConfiguration();
         config.DivingFish ??= new DivingFishConfiguration();
         config.Lxns ??= new LxnsConfiguration();
         config.OpenAi ??= new OpenAIConfiguration();
@@ -135,9 +135,9 @@ public static class ConfigurationManager
     {
         WarnIfEmpty("web.private", config.Web?.Private);
         WarnIfEmpty("web.public", config.Web?.Public);
-        WarnIfEmpty("napCat.endpoint", config.NapCat?.Endpoint);
-        WarnIfEmpty("napCat.token", config.NapCat?.Token);
-        WarnIfEmpty("napCat.selfId", config.NapCat?.SelfId);
+        WarnIfEmpty("onebot.endpoint", config.OneBot?.Endpoint);
+        WarnIfEmpty("onebot.token", config.OneBot?.Token);
+        WarnIfEmpty("onebot.selfId", config.OneBot?.SelfId);
         WarnIfEmpty("osu.clientId", config.Osu?.ClientIdRaw);
         WarnIfEmpty("osu.clientSecret", config.Osu?.ClientSecretRaw);
         WarnIfEmpty("divingFish.devToken", config.DivingFish?.DevTokenRaw);

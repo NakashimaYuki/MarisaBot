@@ -16,7 +16,8 @@ public class PluginConfiguration
 
     public WebConfiguration Web { get; set; }
 
-    public NapCatConfiguration NapCat { get; set; }
+    [YamlMember(Alias = "onebot", ApplyNamingConventions = false)]
+    public OneBotConfiguration OneBot { get; set; }
 
     public DivingFishConfiguration DivingFish { get; set; }
 

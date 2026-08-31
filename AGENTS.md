@@ -16,7 +16,7 @@ is left unchecked.
 
 ## Repo Shape
 - `Marisa.StartUp` hosts ASP.NET, serves `wwwroot`, falls back to `index.html`, and listens on `http://0.0.0.0:14311`.
-- Runtime message transport is `Marisa.Backend.NapCat`; startup wires `NapCatBackend.Config(Utils.Assembly().GetTypes())`.
+- Runtime message transport is `Marisa.Backend.OneBot`; startup wires `OneBotBackend.Config(Utils.Assembly().GetTypes())`.
 - Plugin discovery is reflection-based. `BotDriver.Config(...)` only registers types from the `Marisa.Plugin` assembly with `[MarisaPlugin]`, skips `[MarisaPluginDisabled]`, and orders them by plugin priority.
 - `Marisa.Plugin` contains concrete bot plugins. `Marisa.Plugin.Shared` and `Marisa.Plugin.Shared.FSharp` hold shared game/data logic. `Marisa.BotDriver` owns dispatch and plugin exception handling.
 - For `Marisa.Plugin/MaiMaiDx`, keep helper/utility functions in `MaiMaiDx.Utils.cs`; keep `MaiMaiDx.cs` focused on plugin wiring and lifecycle.
@@ -57,4 +57,4 @@ is left unchecked.
 
 ## Behavior Traps
 - Dialog behavior is split across `Marisa.Plugin/Dialog.cs` and `Marisa.Plugin.Shared/Dialog/DialogManager.cs`. The dialog plugin falls back from `(group,user)` to `(group,null)` and then tries to restore the old handler if downstream plugins do not permanently claim the key.
-- NapCat private sessions with subtype `group` are intentionally mapped to `FriendMessage` in `NapCatBackend.PrivateMessageType(...)`; dialog and private-command behavior depends on this.
+- OneBot private sessions with subtype `group` are intentionally mapped to `FriendMessage` in `OneBotBackend.PrivateMessageType(...)`; dialog and private-command behavior depends on this.

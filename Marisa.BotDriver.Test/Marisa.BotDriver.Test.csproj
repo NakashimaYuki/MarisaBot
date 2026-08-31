@@ -10,7 +10,10 @@
         <PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
     </ItemGroup>
     <ItemGroup>
-        <ProjectReference Include="..\Marisa.Backend.NapCat\Marisa.Backend.NapCat.csproj" />
+        <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Marisa.Backend.OneBot\Marisa.Backend.OneBot.csproj" />
         <ProjectReference Include="..\Marisa.Plugin\Marisa.Plugin.csproj" />
     </ItemGroup>
 </Project>

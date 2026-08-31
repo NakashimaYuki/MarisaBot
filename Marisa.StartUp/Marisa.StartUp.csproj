@@ -15,68 +15,56 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <FrontendRestoreInputs Include="$(FrontendRoot)package.json;$(FrontendRoot)package-lock.json"/>
-        <FrontendBuildInputs Include="$(FrontendRoot)src\**\*;$(FrontendRoot)public\**\*;$(FrontendRoot)index.html;$(FrontendRoot)package.json;$(FrontendRoot)package-lock.json;$(FrontendRoot)vite.config.ts;$(FrontendRoot)tsconfig.json;$(FrontendRoot)jsconfig.json;$(FrontendRoot)postcss.config.js;$(FrontendRoot)tailwind.config.js;$(FrontendRoot).eslintrc.js"/>
+        <FrontendRestoreInputs Include="$(FrontendRoot)package.json;$(FrontendRoot)package-lock.json" />
+        <FrontendBuildInputs Include="$(FrontendRoot)src\**\*;$(FrontendRoot)public\**\*;$(FrontendRoot)index.html;$(FrontendRoot)package.json;$(FrontendRoot)package-lock.json;$(FrontendRoot)vite.config.ts;$(FrontendRoot)tsconfig.json;$(FrontendRoot)jsconfig.json;$(FrontendRoot)postcss.config.js;$(FrontendRoot)tailwind.config.js;$(FrontendRoot).eslintrc.js" />
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Marisa.Backend.NapCat\Marisa.Backend.NapCat.csproj"/>
-        <ProjectReference Include="..\Marisa.Plugin\Marisa.Plugin.csproj"/>
+        <ProjectReference Include="..\Marisa.Backend.OneBot\Marisa.Backend.OneBot.csproj" />
+        <ProjectReference Include="..\Marisa.Plugin\Marisa.Plugin.csproj" />
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="7.0.3"/>
-        <PackageReference Include="NLog.Extensions.Logging" Version="5.3.11"/>
-        <PackageReference Include="NLog.Web.AspNetCore" Version="5.3.11"/>
-        <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0"/>
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="7.0.3" />
+        <PackageReference Include="NLog.Extensions.Logging" Version="5.3.11" />
+        <PackageReference Include="NLog.Web.AspNetCore" Version="5.3.11" />
+        <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
     </ItemGroup>
 
-    <Target Name="RestoreFrontendPackages"
-            Inputs="@(FrontendRestoreInputs)"
-            Outputs="$(FrontendRestoreStamp)">
-        <Exec Command="npm install" WorkingDirectory="$(FrontendRoot)"/>
-        <Touch Files="$(FrontendRestoreStamp)" AlwaysCreate="true"/>
+    <Target Name="RestoreFrontendPackages" Inputs="@(FrontendRestoreInputs)" Outputs="$(FrontendRestoreStamp)">
+        <Exec Command="npm install" WorkingDirectory="$(FrontendRoot)" />
+        <Touch Files="$(FrontendRestoreStamp)" AlwaysCreate="true" />
     </Target>
 
-    <Target Name="RunWebpack"
-            BeforeTargets="BeforeBuild"
-            DependsOnTargets="RestoreFrontendPackages"
-            Inputs="@(FrontendBuildInputs)"
-            Outputs="$(FrontendBuildStamp);$(FrontendDistRoot)index.html">
-        <Exec Command="npx vite build" WorkingDirectory="$(FrontendRoot)"/>
-        <Touch Files="$(FrontendBuildStamp)" AlwaysCreate="true"/>
+    <Target Name="RunWebpack" BeforeTargets="BeforeBuild" DependsOnTargets="RestoreFrontendPackages" Inputs="@(FrontendBuildInputs)" Outputs="$(FrontendBuildStamp);$(FrontendDistRoot)index.html">
+        <Exec Command="npx vite build" WorkingDirectory="$(FrontendRoot)" />
+        <Touch Files="$(FrontendBuildStamp)" AlwaysCreate="true" />
     </Target>
 
     <ItemGroup>
-        <Content Include="config.yaml" CopyToPublishDirectory="Always" CopyToOutputDirectory="Always"/>
+        <Content Include="config.yaml" CopyToPublishDirectory="Always" CopyToOutputDirectory="Always" />
     </ItemGroup>
 
-    <Target Name="CopyFilesToBuildOutput"
-            AfterTargets="Build"
-            Inputs="$(FrontendBuildStamp)"
-            Outputs="$(BuildFrontendCopyStamp);$(OutputPath)wwwroot\index.html">
+    <Target Name="CopyFilesToBuildOutput" AfterTargets="Build" Inputs="$(FrontendBuildStamp)" Outputs="$(BuildFrontendCopyStamp);$(OutputPath)wwwroot\index.html">
         <ItemGroup>
-            <SourceFiles Include="$(FrontendDistRoot)**\*" Exclude="$(FrontendBuildStamp)"/>
-            <DestinationFiles Include="@(SourceFiles->'$(OutputPath)wwwroot/%(RecursiveDir)%(Filename)%(Extension)')"/>
+            <SourceFiles Include="$(FrontendDistRoot)**\*" Exclude="$(FrontendBuildStamp)" />
+            <DestinationFiles Include="@(SourceFiles->'$(OutputPath)wwwroot/%(RecursiveDir)%(Filename)%(Extension)')" />
         </ItemGroup>
 
-        <Copy SourceFiles="@(SourceFiles)" DestinationFiles="@(DestinationFiles)" SkipUnchangedFiles="true"/>
-        <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(BuildFrontendCopyStamp)'))"/>
-        <Touch Files="$(BuildFrontendCopyStamp)" AlwaysCreate="true"/>
+        <Copy SourceFiles="@(SourceFiles)" DestinationFiles="@(DestinationFiles)" SkipUnchangedFiles="true" />
+        <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(BuildFrontendCopyStamp)'))" />
+        <Touch Files="$(BuildFrontendCopyStamp)" AlwaysCreate="true" />
     </Target>
 
-    <Target Name="CopyFilesToPublishOutput"
-            AfterTargets="Publish"
-            Inputs="$(FrontendBuildStamp)"
-            Outputs="$(PublishFrontendCopyStamp);$(PublishDir)wwwroot\index.html">
+    <Target Name="CopyFilesToPublishOutput" AfterTargets="Publish" Inputs="$(FrontendBuildStamp)" Outputs="$(PublishFrontendCopyStamp);$(PublishDir)wwwroot\index.html">
         <ItemGroup>
-            <PublishSourceFiles Include="$(FrontendDistRoot)**\*" Exclude="$(FrontendBuildStamp)"/>
-            <PublishDestinationFiles Include="@(PublishSourceFiles->'$(PublishDir)wwwroot/%(RecursiveDir)%(Filename)%(Extension)')"/>
+            <PublishSourceFiles Include="$(FrontendDistRoot)**\*" Exclude="$(FrontendBuildStamp)" />
+            <PublishDestinationFiles Include="@(PublishSourceFiles->'$(PublishDir)wwwroot/%(RecursiveDir)%(Filename)%(Extension)')" />
         </ItemGroup>
 
-        <Copy SourceFiles="@(PublishSourceFiles)" DestinationFiles="@(PublishDestinationFiles)" SkipUnchangedFiles="true"/>
-        <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(PublishFrontendCopyStamp)'))"/>
-        <Touch Files="$(PublishFrontendCopyStamp)" AlwaysCreate="true"/>
+        <Copy SourceFiles="@(PublishSourceFiles)" DestinationFiles="@(PublishDestinationFiles)" SkipUnchangedFiles="true" />
+        <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(PublishFrontendCopyStamp)'))" />
+        <Touch Files="$(PublishFrontendCopyStamp)" AlwaysCreate="true" />
     </Target>
 
     <PropertyGroup>

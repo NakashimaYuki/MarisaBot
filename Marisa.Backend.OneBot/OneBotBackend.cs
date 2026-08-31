@@ -13,9 +13,9 @@ using Marisa.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NLog;
 
-namespace Marisa.Backend.NapCat;
+namespace Marisa.Backend.OneBot;
 
-public class NapCatBackend : BotDriver.BotDriver
+public class OneBotBackend : BotDriver.BotDriver
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -24,18 +24,18 @@ public class NapCatBackend : BotDriver.BotDriver
 
     private readonly Logger _logger;
     private readonly DictionaryProvider _dict;
-    private readonly Uri _endpoint;
-    private readonly NapCatConfiguration _config;
+    private readonly OneBotConfiguration _config;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pendingActions = new();
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
+    private readonly Uri _endpoint;
     private ClientWebSocket? _socket;
     private Task? _receiveTask;
     private long _echo;
     private long _selfId;
 
-    public NapCatBackend(
+    public OneBotBackend(
         IServiceProvider serviceProvider,
         IEnumerable<MarisaPluginBase> pluginsAll,
         DictionaryProvider dict,
@@ -45,7 +45,7 @@ public class NapCatBackend : BotDriver.BotDriver
     {
         _logger   = LogManager.GetCurrentClassLogger();
         _dict     = dict;
-        _config   = ConfigurationManager.Configuration.NapCat;
+        _config   = ConfigurationManager.Configuration.OneBot;
         _endpoint = BuildEndpoint(string.IsNullOrWhiteSpace(_config.Endpoint) ? "ws://127.0.0.1:3001" : _config.Endpoint, _config.Token);
 
         if (long.TryParse(_config.SelfId, out var selfId))
@@ -57,7 +57,7 @@ public class NapCatBackend : BotDriver.BotDriver
     public new static IServiceCollection Config(Type[] types)
     {
         var sc = BotDriver.BotDriver.Config(types);
-        sc.AddScoped<BotDriver.BotDriver, NapCatBackend>();
+        sc.AddScoped<BotDriver.BotDriver, OneBotBackend>();
         return sc;
     }
 
@@ -150,7 +150,6 @@ public class NapCatBackend : BotDriver.BotDriver
             _logger.Info($"{target} <-[temp:{groupId}] {message}");
 
             // OneBot keeps temporary sessions on send_private_msg with an optional group_id context.
-            // NapCat accepts this shape for private.group events reported from group temporary sessions.
             var parameters = new Dictionary<string, object?>
             {
                 ["user_id"] = target.ToString(),
@@ -164,28 +163,28 @@ public class NapCatBackend : BotDriver.BotDriver
 
             await SendAction("send_private_msg", parameters);
         }
+    }
 
-        static bool IsUnavailableGroupFailure(MessageToSend s, Exception ex)
+    private static bool IsUnavailableGroupFailure(MessageToSend s, Exception ex)
+    {
+        if (s.Type != MessageType.GroupMessage || ex is not InvalidOperationException)
         {
-            if (s.Type != MessageType.GroupMessage || ex is not InvalidOperationException)
-            {
-                return false;
-            }
-
-            return ex.Message.Contains("你已被移出该群", StringComparison.Ordinal) ||
-                   ex.Message.Contains("群聊不存在", StringComparison.Ordinal) ||
-                   ex.Message.Contains("\"result\": 110", StringComparison.Ordinal) ||
-                   ex.Message.Contains("\"result\":110", StringComparison.Ordinal);
+            return false;
         }
 
-        static string DescribeTarget(MessageToSend s)
+        return ex.Message.Contains("你已被移出该群", StringComparison.Ordinal) ||
+               ex.Message.Contains("群聊不存在", StringComparison.Ordinal) ||
+               ex.Message.Contains("\"result\": 110", StringComparison.Ordinal) ||
+               ex.Message.Contains("\"result\":110", StringComparison.Ordinal);
+    }
+
+    private static string DescribeTarget(MessageToSend s)
+    {
+        return s.Type switch
         {
-            return s.Type switch
-            {
-                MessageType.TempMessage => $"user {s.ReceiverId} (temp group {s.GroupId?.ToString() ?? "?"})",
-                _ => s.ReceiverId.ToString()
-            };
-        }
+            MessageType.TempMessage => $"user {s.ReceiverId} (temp group {s.GroupId?.ToString() ?? "?"})",
+            _ => s.ReceiverId.ToString()
+        };
     }
 
     public override async Task Invoke()
@@ -216,11 +215,11 @@ public class NapCatBackend : BotDriver.BotDriver
         }
         catch (Exception ex)
         {
-            _logger.Warn(ex, "Failed to initialize NapCat login info; set napCat.selfId if @ triggers are needed before the first message");
+            _logger.Warn(ex, "Failed to initialize OneBot login info; set onebot.selfId if @ triggers are needed before the first message");
         }
     }
 
-    private async Task ReceiveLoop()
+    protected async Task ReceiveLoop()
     {
         while (!ShutdownToken.IsCancellationRequested)
         {
@@ -251,7 +250,7 @@ public class NapCatBackend : BotDriver.BotDriver
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "NapCat WebSocket receive loop failed; reconnecting in 5 seconds");
+                _logger.Error(ex, "OneBot WebSocket receive loop failed; reconnecting in 5 seconds");
                 FailPendingActions(ex);
                 CloseSocket();
                 await Task.Delay(TimeSpan.FromSeconds(5), ShutdownToken);
@@ -259,7 +258,7 @@ public class NapCatBackend : BotDriver.BotDriver
         }
     }
 
-    private async Task HandleEvent(JsonElement root)
+    protected virtual async Task HandleEvent(JsonElement root)
     {
         if (_selfId == 0)
         {
@@ -327,7 +326,7 @@ public class NapCatBackend : BotDriver.BotDriver
             default:
                 if (postType is not null)
                 {
-                    _logger.Debug($"Not implemented NapCat event: `{root.GetRawText()}`");
+                    _logger.Debug($"Not implemented OneBot event: `{root.GetRawText()}`");
                 }
 
                 break;
@@ -388,12 +387,11 @@ public class NapCatBackend : BotDriver.BotDriver
         };
     }
 
+    // 临时会话 (private.group) 按普通好友消息处理，使 dialog 与私聊指令行为一致。
     private static MessageType PrivateMessageType(string? subType, long targetId)
     {
         return subType switch
         {
-            // NapCat reports temporary private sessions as private.group, but downstream dialog and private-command
-            // handling expects these follow-up messages to behave like normal friend messages.
             "group" => MessageType.FriendMessage,
             "other" => MessageType.StrangerMessage,
             _ => MessageType.FriendMessage
@@ -627,7 +625,7 @@ public class NapCatBackend : BotDriver.BotDriver
                     }));
                     break;
                 case MessageDataOneBotSegment oneBotSegment:
-                    // Pass through exact NapCat/OneBot segments for types Marisa does not model directly.
+                    // Pass through exact OneBot segments for types Marisa does not model directly.
                     segments.Add(Segment(oneBotSegment.SegmentType, oneBotSegment.Data));
                     break;
                 default:
@@ -671,7 +669,7 @@ public class NapCatBackend : BotDriver.BotDriver
         }
     }
 
-    private async Task<JsonElement> SendAction(string action, Dictionary<string, object?> parameters)
+    protected async Task<JsonElement> SendAction(string action, Dictionary<string, object?> parameters)
     {
         await ConnectWithRetry();
 
@@ -693,7 +691,7 @@ public class NapCatBackend : BotDriver.BotDriver
 
             if (ReadString(response, "status") != "ok" || ReadLong(response, "retcode", 0) != 0)
             {
-                throw new InvalidOperationException($"NapCat action `{action}` failed: {response.GetRawText()}");
+                throw new InvalidOperationException($"OneBot action `{action}` failed: {response.GetRawText()}");
             }
 
             return response.TryGetProperty("data", out var data) ? data.Clone() : default;
@@ -709,7 +707,7 @@ public class NapCatBackend : BotDriver.BotDriver
         var socket = _socket;
         if (socket is null || socket.State != WebSocketState.Open)
         {
-            throw new WebSocketException("NapCat WebSocket is not connected");
+            throw new WebSocketException("OneBot WebSocket is not connected");
         }
 
         var bytes = Encoding.UTF8.GetBytes(text);
@@ -762,7 +760,7 @@ public class NapCatBackend : BotDriver.BotDriver
         }
     }
 
-    private async Task ConnectWithRetry()
+    protected async Task ConnectWithRetry()
     {
         await _connectLock.WaitAsync(ShutdownToken);
         try
@@ -783,12 +781,12 @@ public class NapCatBackend : BotDriver.BotDriver
 
                     await socket.ConnectAsync(_endpoint, ShutdownToken);
                     _socket = socket;
-                    _logger.Info($"Connected to NapCat OneBot WebSocket: {_endpoint}");
+                    _logger.Info($"Connected to OneBot WebSocket: {_endpoint}");
                     return;
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn(ex, $"Failed to connect NapCat OneBot WebSocket {_endpoint}; retrying in 5 seconds");
+                    _logger.Warn(ex, $"Failed to connect OneBot WebSocket {_endpoint}; retrying in 5 seconds");
                     await Task.Delay(TimeSpan.FromSeconds(5), ShutdownToken);
                 }
             }
@@ -856,11 +854,6 @@ public class NapCatBackend : BotDriver.BotDriver
             JsonValueKind.String when long.TryParse(value.GetString(), out var number) => number,
             _ => fallback
         };
-    }
-
-    private static long FirstNonZero(params long[] values)
-    {
-        return values.FirstOrDefault(x => x != 0);
     }
 
     private static Dictionary<string, object?> ToDictionary(JsonElement element)
