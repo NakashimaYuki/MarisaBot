@@ -824,55 +824,6 @@ public partial class MaiMaiDx
         return await ValueAnalysis(message, mode, rank);
     }
 
-    private async Task<MarisaPluginTaskState> ValueAnalysis(
-        Message message,
-        MaiValueAnalysisMode mode,
-        MaiAchievementRank? rank)
-    {
-        var fetcher = GetDataFetcher(message);
-        var rating  = await fetcher.GetRating(message);
-        IReadOnlyList<SongScore> scores;
-        string scope;
-        if (rank == null)
-        {
-            scores = rating.OldScores.Concat(rating.NewScores).ToList();
-            scope  = "B50";
-        }
-        else
-        {
-            scores = MaiValueAnalysisEngine.FilterByRank((await fetcher.GetScores(message)).Values, rank.Value);
-            scope  = $"{MaiAchievementRanks.Label(rank.Value)} · 全成绩";
-        }
-
-        if (scores.Count == 0)
-        {
-            message.Reply(rank == null ? "当前 B50 中没有可分析的成绩" : $"没有 {MaiAchievementRanks.Label(rank.Value)} 成绩");
-            return MarisaPluginTaskState.CompletedTask;
-        }
-
-        var engine = new MaiValueAnalysisEngine(SongDb.SongList);
-        var fallback = engine.RequiresFallback(scores)
-            ? await DivingFishChartStatsProvider.Default.GetAsync()
-            : DivingFishChartStatsCatalog.Empty;
-        var data = engine.Build(
-            rating.Nickname,
-            rating.Rating,
-            scope,
-            scores,
-            mode,
-            fallback);
-
-        if (data.AnalyzedCount == 0)
-        {
-            message.Reply("这些成绩目前都没有可用的拟合定数");
-            return MarisaPluginTaskState.CompletedTask;
-        }
-
-        var context = new WebContext(new { analysis = data });
-        message.Reply(MessageDataImage.FromBase64(await WebApi.MaiMaiValueAnalysis(context.Id)));
-        return MarisaPluginTaskState.CompletedTask;
-    }
-
     /// <summary>
     ///     单曲各难度成绩
     /// </summary>
