@@ -2,7 +2,7 @@
     <MaiCardShell v-if="data" class="value-analysis" :bg-key="bgKey" :accent="accent" :width="1180" pad-bottom="pb-8">
         <header>
             <div>
-                <div class="eyebrow">MAIMAI DX · VALUE ANALYSIS</div>
+                <div class="eyebrow">MAIMAI <span class="dx-label">DX</span> · VALUE ANALYSIS</div>
                 <div class="mt-2 flex items-center gap-4">
                     <h1>{{ title }}</h1>
                     <span class="scope-chip">{{ data.Scope }}</span>
@@ -27,7 +27,7 @@
 
             <div class="stats-grid">
                 <div class="stat-card">
-                    <span>可计算谱面</span>
+                    <span>已分析谱面</span>
                     <strong>{{ data.AnalyzedCount }}<small>/{{ data.SelectedCount }}</small></strong>
                 </div>
                 <div class="stat-card featured">
@@ -35,7 +35,7 @@
                     <strong :style="{ color: deviationColor(stats.Mean) }">{{ signed(stats.Mean) }}</strong>
                 </div>
                 <div class="stat-card wide">
-                    <span>平均偏差 95% CI</span>
+                    <span>平均偏差的 95% 置信区间</span>
                     <strong>{{ signed(stats.MeanCiLow) }} ～ {{ signed(stats.MeanCiHigh) }}</strong>
                 </div>
                 <div class="stat-card">
@@ -95,7 +95,7 @@
         </section>
 
         <footer class="mt-6 flex items-baseline justify-between gap-6">
-            <span>拟合来源：MAI CURVE 优先，缺失谱面回退 DIVING-FISH CHART STATS</span>
+            <span>拟合来源：优先使用 MAI CURVE，数据缺失时使用 DIVING-FISH CHART STATS</span>
             <strong>MARISA BOT · VALUE ANALYSIS</strong>
         </footer>
     </MaiCardShell>
@@ -172,7 +172,7 @@ axios.get(context_get, {params: {id: route.query.id, name: 'analysis'}})
 const stats = computed(() => data.value!.Statistics)
 const isGold = computed(() => data.value?.Mode === 'gold')
 const title = computed(() => isGold.value ? '含金量分析' : '水分分析')
-const listTitle = computed(() => isGold.value ? '含金谱面 TOP 10' : '水分谱面 TOP 10')
+const listTitle = computed(() => isGold.value ? '最具含金量谱面TOP10' : '最水谱面TOP10')
 const accent = computed(() => isGold.value ? '#f5c451' : '#5ed4ff')
 const bgKey = bgKeyOf(3, false)
 const columns = computed(() => [data.value!.TopCharts.slice(0, 5), data.value!.TopCharts.slice(5, 10)])
@@ -223,6 +223,7 @@ async function preload(payload: AnalysisData) {
 <style scoped lang="postcss">
 .value-analysis { color: #fff; }
 .eyebrow { font-family: 'Torus',sans-serif; font-size: 14px; font-weight: 800; letter-spacing: 0.28em; color: rgba(255,255,255,0.48); }
+.dx-label { display: inline-block; letter-spacing: 0.08em; vertical-align: baseline; }
 h1 { font-family: 'Microsoft YaHei',sans-serif; font-size: 38px; font-weight: 900; letter-spacing: 0.02em; text-shadow: 0 3px 8px rgba(0,0,0,0.45); }
 .scope-chip { padding: 5px 14px; border: 1px solid rgba(255,255,255,0.2); border-radius: 9999px; background: rgba(255,255,255,0.08); font-family: 'Torus','Microsoft YaHei',sans-serif; font-size: 14px; font-weight: 800; }
 .overview { display: flex; gap: 18px; }
