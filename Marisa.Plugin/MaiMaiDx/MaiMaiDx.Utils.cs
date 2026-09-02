@@ -82,69 +82,65 @@ public partial class MaiMaiDx
     private static bool TryParseValueAnalysisCommand(
         ReadOnlyMemory<char> command,
         out MaiValueAnalysisMode mode,
-        out MaiAchievementRank? rank)
+        out MaiValueAnalysisFilter filter)
     {
         mode = default;
-        rank = null;
-        var compact = string.Concat(command.ToString().Where(c => !char.IsWhiteSpace(c))).Replace('＋', '+');
+        filter = MaiValueAnalysisFilter.Empty;
+        var input = command.ToString().Trim();
 
         const string goldSuffix = "含金量分析";
         const string waterSuffix = "水分分析";
-        string rankToken;
-        if (compact.EndsWith(goldSuffix, StringComparison.OrdinalIgnoreCase))
+        string filterToken;
+        if (input.EndsWith(goldSuffix, StringComparison.OrdinalIgnoreCase))
         {
-            mode      = MaiValueAnalysisMode.Gold;
-            rankToken = compact[..^goldSuffix.Length];
+            mode        = MaiValueAnalysisMode.Gold;
+            filterToken = input[..^goldSuffix.Length].Trim();
         }
-        else if (compact.EndsWith(waterSuffix, StringComparison.OrdinalIgnoreCase))
+        else if (input.EndsWith(waterSuffix, StringComparison.OrdinalIgnoreCase))
         {
-            mode      = MaiValueAnalysisMode.Water;
-            rankToken = compact[..^waterSuffix.Length];
+            mode        = MaiValueAnalysisMode.Water;
+            filterToken = input[..^waterSuffix.Length].Trim();
         }
         else
         {
             return false;
         }
 
-        if (rankToken.Length == 0) return true;
-        if (!MaiAchievementRanks.TryParse(rankToken, out var parsed)) return false;
-
-        rank = parsed;
-        return true;
+        return filterToken.Length == 0 || MaiValueAnalysisFilters.TryParse(filterToken, out filter);
     }
 
-    private static bool RankedValueAnalysisTrigger(Message message, IServiceProvider _serviceProvider)
+    private static bool FilteredValueAnalysisTrigger(Message message, IServiceProvider _serviceProvider)
     {
-        return TryParseValueAnalysisCommand(message.Command, out _, out var rank) && rank != null;
+        return TryParseValueAnalysisCommand(message.Command, out _, out var filter) && !filter.IsEmpty;
     }
 
     private async Task<MarisaPluginTaskState> ValueAnalysis(
         Message message,
         MaiValueAnalysisMode mode,
-        MaiAchievementRank? rank)
+        MaiValueAnalysisFilter filter)
     {
         var fetcher = GetDataFetcher(message);
         var rating  = await fetcher.GetRating(message);
+        var engine  = new MaiValueAnalysisEngine(SongDb.SongList);
         IReadOnlyList<SongScore> scores;
         string scope;
-        if (rank == null)
+        if (filter.IsEmpty)
         {
             scores = rating.OldScores.Concat(rating.NewScores).ToList();
             scope  = "B50";
         }
         else
         {
-            scores = MaiValueAnalysisEngine.FilterByRank((await fetcher.GetScores(message)).Values, rank.Value);
-            scope  = $"{MaiAchievementRanks.Label(rank.Value)} · 全成绩";
+            scores = engine.FilterScores((await fetcher.GetScores(message)).Values, filter);
+            scope  = MaiValueAnalysisFilters.Scope(filter);
         }
 
         if (scores.Count == 0)
         {
-            message.Reply(rank == null ? "当前 B50 中没有可分析的成绩" : $"没有 {MaiAchievementRanks.Label(rank.Value)} 成绩");
+            message.Reply(filter.IsEmpty ? "当前 B50 中没有可分析的成绩" : "没有符合筛选条件的成绩");
             return MarisaPluginTaskState.CompletedTask;
         }
 
-        var engine = new MaiValueAnalysisEngine(SongDb.SongList);
         var fallback = engine.RequiresFallback(scores)
             ? await DivingFishChartStatsProvider.Default.GetAsync()
             : DivingFishChartStatsCatalog.Empty;

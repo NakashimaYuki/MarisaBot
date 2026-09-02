@@ -125,6 +125,163 @@ public static class MaiAchievementRanks
     }
 }
 
+public sealed record MaiValueAnalysisFilter(
+    MaiAchievementRank? Rank = null,
+    string? Level = null,
+    int? DifficultyIndex = null,
+    double? Constant = null)
+{
+    public static MaiValueAnalysisFilter Empty { get; } = new();
+
+    public bool IsEmpty => Rank is null && Level is null && DifficultyIndex is null && Constant is null;
+}
+
+public static class MaiValueAnalysisFilters
+{
+    private static readonly (string Token, int DifficultyIndex)[] DifficultyTokens =
+        PlateData.DifficultyAliasMap
+            .Select(x => (x.Key, x.Value))
+            .OrderByDescending(x => x.Key.Length)
+            .ToArray();
+
+    public static bool TryParse(string input, out MaiValueAnalysisFilter filter)
+    {
+        var parts = input.Normalize(System.Text.NormalizationForm.FormKC)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var current = MaiValueAnalysisFilter.Empty;
+        foreach (var part in parts)
+        {
+            if (!TryParseRemaining(part, current, out var next))
+            {
+                filter = MaiValueAnalysisFilter.Empty;
+                return false;
+            }
+            current = next;
+        }
+
+        filter = current;
+        return !filter.IsEmpty;
+
+        static bool TryParseRemaining(
+            string remaining,
+            MaiValueAnalysisFilter current,
+            out MaiValueAnalysisFilter result)
+        {
+            if (remaining.Length == 0)
+            {
+                result = current;
+                return true;
+            }
+
+            if (current.DifficultyIndex is null)
+            {
+                foreach (var (token, difficultyIndex) in DifficultyTokens)
+                {
+                    if (!remaining.StartsWith(token, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (TryParseRemaining(
+                            remaining[token.Length..],
+                            current with { DifficultyIndex = difficultyIndex },
+                            out result)) return true;
+                }
+            }
+
+            if (current.Constant is null)
+            {
+                for (var length = Math.Min(4, remaining.Length); length >= 3; length--)
+                {
+                    if (!TryParseConstant(remaining[..length], out var constant)) continue;
+                    if (TryParseRemaining(
+                            remaining[length..],
+                            current with { Constant = constant },
+                            out result)) return true;
+                }
+            }
+
+            if (current.Level is null)
+            {
+                for (var length = Math.Min(3, remaining.Length); length >= 1; length--)
+                {
+                    if (!TryParseLevel(remaining[..length], out var level)) continue;
+                    if (TryParseRemaining(
+                            remaining[length..],
+                            current with { Level = level },
+                            out result)) return true;
+                }
+            }
+
+            if (current.Rank is null)
+            {
+                for (var length = Math.Min(4, remaining.Length); length >= 1; length--)
+                {
+                    if (!MaiAchievementRanks.TryParse(remaining[..length], out var rank)) continue;
+                    if (TryParseRemaining(
+                            remaining[length..],
+                            current with { Rank = rank },
+                            out result)) return true;
+                }
+            }
+
+            result = MaiValueAnalysisFilter.Empty;
+            return false;
+        }
+    }
+
+    public static string Scope(MaiValueAnalysisFilter filter)
+    {
+        if (filter.IsEmpty) return "B50";
+
+        var parts = new List<string> { "全成绩" };
+        if (filter.Rank is { } rank) parts.Add($"达成率 {MaiAchievementRanks.Label(rank)}");
+        if (filter.Level is { } level) parts.Add($"等级 {level}");
+        if (filter.DifficultyIndex is { } difficultyIndex) parts.Add(DifficultyLabel(difficultyIndex));
+        if (filter.Constant is { } constant)
+            parts.Add($"定数 {constant.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}");
+        return string.Join(" · ", parts);
+    }
+
+    private static bool TryParseLevel(string value, out string level)
+    {
+        level = "";
+        var plus = value.EndsWith('+');
+        var core = plus ? value[..^1] : value;
+        if (core.Length is 0 or > 2 || !core.All(char.IsAsciiDigit) || core[0] == '0') return false;
+
+        var parsed = int.Parse(core);
+        if (parsed < 1 || parsed > (plus ? 14 : 15)) return false;
+
+        level = plus ? $"{parsed}+" : parsed.ToString();
+        return true;
+    }
+
+    private static bool TryParseConstant(string value, out double constant)
+    {
+        constant = 0;
+        var dot = value.IndexOf('.');
+        if (dot < 1 || dot != value.LastIndexOf('.')) return false;
+
+        var integer = value[..dot];
+        var fraction = value[(dot + 1)..];
+        if (integer.Length is 0 or > 2 || !integer.All(char.IsAsciiDigit) || integer[0] == '0') return false;
+        if (fraction.Length != 1 || !char.IsAsciiDigit(fraction[0])) return false;
+
+        constant = int.Parse(integer) + (fraction[0] - '0') / 10.0;
+        return constant is >= 1 and <= 15;
+    }
+
+    private static string DifficultyLabel(int difficultyIndex)
+    {
+        return difficultyIndex switch
+        {
+            0 => "BASIC",
+            1 => "ADVANCED",
+            2 => "EXPERT",
+            3 => "MASTER",
+            4 => "Re:MASTER",
+            _ => throw new ArgumentOutOfRangeException(nameof(difficultyIndex), difficultyIndex, null)
+        };
+    }
+}
+
 public sealed record MaiValueAnalysisItem(
     long SongId,
     string Title,
@@ -180,6 +337,7 @@ public sealed class MaiValueAnalysisEngine
     public bool RequiresFallback(IEnumerable<SongScore> scores)
     {
         return DistinctScores(scores).Any(score =>
+            TryResolveChartMetadata(score, out _, out _, out _) &&
             !_curveCatalog.TryGetPooled(score.Id, score.LevelIdx, out _));
     }
 
@@ -192,7 +350,9 @@ public sealed class MaiValueAnalysisEngine
         DivingFishChartStatsCatalog? fallbackCatalog = null)
     {
         fallbackCatalog ??= DivingFishChartStatsCatalog.Empty;
-        var selected = DistinctScores(selectedScores).ToList();
+        var selected = DistinctScores(selectedScores)
+            .Where(score => TryResolveChartMetadata(score, out _, out _, out _))
+            .ToList();
         var items = selected
             .Select(score => CreateItem(score, fallbackCatalog))
             .Where(item => item != null)
@@ -227,24 +387,18 @@ public sealed class MaiValueAnalysisEngine
             top);
     }
 
-    public static IReadOnlyList<SongScore> FilterByRank(
+    public IReadOnlyList<SongScore> FilterScores(
         IEnumerable<SongScore> scores,
-        MaiAchievementRank rank)
+        MaiValueAnalysisFilter filter)
     {
-        return scores.Where(x => MaiAchievementRanks.Contains(rank, x.Achievement)).ToList();
+        return DistinctScores(scores).Where(score => MatchesFilter(score, filter)).ToList();
     }
 
     private MaiValueAnalysisItem? CreateItem(
         SongScore score,
         DivingFishChartStatsCatalog fallbackCatalog)
     {
-        if (score.LevelIdx is < 0 or > 4) return null;
-
-        _songs.TryGetValue(score.Id, out var song);
-        var officialConstant = song != null && score.LevelIdx < song.Constants.Count
-            ? song.Constants[score.LevelIdx]
-            : score.Constant;
-        if (!double.IsFinite(officialConstant) || officialConstant <= 0) return null;
+        if (!TryResolveChartMetadata(score, out var song, out var level, out var officialConstant)) return null;
 
         double fittedConstant;
         string source;
@@ -265,9 +419,6 @@ public sealed class MaiValueAnalysisEngine
 
         var title = song?.Title ?? score.Title;
         var type  = song?.Type ?? score.Type;
-        var level = song != null && score.LevelIdx < song.Levels.Count
-            ? song.Levels[score.LevelIdx]
-            : score.Level;
 
         return new MaiValueAnalysisItem(
             score.Id,
@@ -285,6 +436,48 @@ public sealed class MaiValueAnalysisEngine
             fittedConstant,
             fittedConstant - officialConstant,
             source);
+    }
+
+    private bool MatchesFilter(SongScore score, MaiValueAnalysisFilter filter)
+    {
+        if (!TryResolveChartMetadata(score, out _, out var level, out var officialConstant)) return false;
+        if (filter.Rank is { } rank && !MaiAchievementRanks.Contains(rank, score.Achievement)) return false;
+        if (filter.DifficultyIndex is { } difficultyIndex && score.LevelIdx != difficultyIndex) return false;
+
+        if (filter.Level is { } expectedLevel && !string.Equals(level, expectedLevel, StringComparison.Ordinal))
+            return false;
+        if (filter.Constant is { } expectedConstant
+            && Math.Abs(officialConstant - expectedConstant) >= 0.000001)
+            return false;
+        return true;
+    }
+
+    private bool TryResolveChartMetadata(
+        SongScore score,
+        out MaiMaiSong? song,
+        out string level,
+        out double constant)
+    {
+        song = null;
+        level = "";
+        constant = 0;
+        if (score.Id is <= 0 or > 100000 || score.LevelIdx is < 0 or > 4) return false;
+
+        if (_songs.TryGetValue(score.Id, out song))
+        {
+            if (score.LevelIdx >= song.Levels.Count
+                || score.LevelIdx >= song.Constants.Count
+                || score.LevelIdx >= song.Charts.Count) return false;
+            level = song.Levels[score.LevelIdx];
+            constant = song.Constants[score.LevelIdx];
+        }
+        else
+        {
+            level = score.Level ?? "";
+            constant = score.Constant;
+        }
+
+        return double.IsFinite(constant) && constant > 0;
     }
 
     private static MaiValueAnalysisStatistics? BuildStatistics(IReadOnlyList<MaiValueAnalysisItem> items)

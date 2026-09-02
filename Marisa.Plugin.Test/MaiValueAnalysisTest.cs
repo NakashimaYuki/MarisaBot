@@ -47,6 +47,88 @@ public class MaiValueAnalysisTest
     }
 
     [Test]
+    public void Value_Analysis_Filter_Should_Parse_Each_Field_And_Arbitrary_Combinations()
+    {
+        AssertFilter("14+", level: "14+", scope: "全成绩 · 等级 14+");
+        AssertFilter("14", level: "14", scope: "全成绩 · 等级 14");
+        AssertFilter("13.9", constant: 13.9, scope: "全成绩 · 定数 13.9");
+        AssertFilter("MASTER", difficultyIndex: 3, scope: "全成绩 · MASTER");
+        AssertFilter("紫谱", difficultyIndex: 3, scope: "全成绩 · MASTER");
+        AssertFilter("Re:MASTER", difficultyIndex: 4, scope: "全成绩 · Re:MASTER");
+        AssertFilter("白谱", difficultyIndex: 4, scope: "全成绩 · Re:MASTER");
+        AssertFilter("Ｒｅ：ＭＡＳＴＥＲ", difficultyIndex: 4, scope: "全成绩 · Re:MASTER");
+        AssertFilter("１ １．０", level: "1", constant: 1.0, scope: "全成绩 · 等级 1 · 定数 1.0");
+        AssertFilter("1 14.8", level: "1", constant: 14.8, scope: "全成绩 · 等级 1 · 定数 14.8");
+        AssertFilter("11.0", constant: 11.0, scope: "全成绩 · 定数 11.0");
+        AssertFilter(
+            "鸟加 14+ 紫谱",
+            MaiAchievementRank.SssPlus,
+            "14+",
+            3,
+            scope: "全成绩 · 达成率 SSS+ · 等级 14+ · MASTER");
+        AssertFilter(
+            "Re:MASTER 14.8 SSS+",
+            MaiAchievementRank.SssPlus,
+            difficultyIndex: 4,
+            constant: 14.8,
+            scope: "全成绩 · 达成率 SSS+ · Re:MASTER · 定数 14.8");
+        AssertFilter("B BASIC 14+", MaiAchievementRank.B, "14+", 0);
+        AssertFilter(
+            "鸟＋14＋白谱14．8",
+            MaiAchievementRank.SssPlus,
+            "14+",
+            4,
+            14.8,
+            "全成绩 · 达成率 SSS+ · 等级 14+ · Re:MASTER · 定数 14.8");
+
+        static void AssertFilter(
+            string input,
+            MaiAchievementRank? rank = null,
+            string? level = null,
+            int? difficultyIndex = null,
+            double? constant = null,
+            string? scope = null)
+        {
+            Assert.That(MaiValueAnalysisFilters.TryParse(input, out var filter), Is.True, input);
+            Assert.Multiple(() =>
+            {
+                Assert.That(filter.Rank, Is.EqualTo(rank), input);
+                Assert.That(filter.Level, Is.EqualTo(level), input);
+                Assert.That(filter.DifficultyIndex, Is.EqualTo(difficultyIndex), input);
+                Assert.That(filter.Constant, Is.EqualTo(constant), input);
+                if (scope != null) Assert.That(MaiValueAnalysisFilters.Scope(filter), Is.EqualTo(scope), input);
+            });
+        }
+    }
+
+    [TestCase("")]
+    [TestCase(" ")]
+    [TestCase("双星")]
+    [TestCase("SSS++")]
+    [TestCase("15+")]
+    [TestCase("16")]
+    [TestCase("014")]
+    [TestCase("14.80")]
+    [TestCase("13,9")]
+    [TestCase("NaN")]
+    [TestCase("紫")]
+    [TestCase("白")]
+    [TestCase("MASTERPIECE")]
+    [TestCase("MASTEREXPERT")]
+    [TestCase("14 13+")]
+    [TestCase("13.9 14.8")]
+    [TestCase("S S")]
+    [TestCase("1 4")]
+    public void Value_Analysis_Filter_Should_Reject_Unknown_Or_Duplicate_Fields(string input)
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(MaiValueAnalysisFilters.TryParse(input, out var filter), Is.False);
+            Assert.That(filter.IsEmpty, Is.True);
+        });
+    }
+
+    [Test]
     public void Analysis_Should_Prefer_Curve_And_Fallback_Per_Chart()
     {
         var songs = Enumerable.Range(1, 4).Select(id => CreateSong(id, 14.0)).ToList();
@@ -159,14 +241,150 @@ public class MaiValueAnalysisTest
             CreateScore(3, 100.0),
             CreateScore(4, 99.9999)
         };
+        var engine = new MaiValueAnalysisEngine([]);
 
-        var sssPlus = MaiValueAnalysisEngine.FilterByRank(scores, MaiAchievementRank.SssPlus);
-        var sss = MaiValueAnalysisEngine.FilterByRank(scores, MaiAchievementRank.Sss);
+        var sssPlus = engine.FilterScores(scores, new(Rank: MaiAchievementRank.SssPlus));
+        var sss = engine.FilterScores(scores, new(Rank: MaiAchievementRank.Sss));
 
         Assert.Multiple(() =>
         {
             Assert.That(sssPlus.Select(x => x.Id), Is.EqualTo(new long[] { 1 }));
             Assert.That(sss.Select(x => x.Id), Is.EqualTo(new long[] { 2, 3 }));
+        });
+    }
+
+    [Test]
+    public void Score_Filter_Should_Use_And_Semantics_For_All_Four_Dimensions()
+    {
+        var songs = new[]
+        {
+            CreateSong(1, 14.8, "14+", 3),
+            CreateSong(2, 14.8, "14+", 3),
+            CreateSong(3, 14.8, "14", 3),
+            CreateSong(4, 14.8, "14+", 4),
+            CreateSong(5, 14.7, "14+", 3)
+        };
+        var scores = new[]
+        {
+            CreateScore(1, 100.5, 3, "14+", 14.8),
+            CreateScore(2, 100.0, 3, "14+", 14.8),
+            CreateScore(3, 100.5, 3, "14", 14.8),
+            CreateScore(4, 100.5, 4, "14+", 14.8),
+            CreateScore(5, 100.5, 3, "14+", 14.7)
+        };
+        var filter = new MaiValueAnalysisFilter(MaiAchievementRank.SssPlus, "14+", 3, 14.8);
+        var engine = new MaiValueAnalysisEngine(songs);
+
+        var result = engine.FilterScores(scores, filter);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Select(x => x.Id), Is.EqualTo(new long[] { 1 }));
+            Assert.That(engine.FilterScores([scores[0]], filter with { Rank = MaiAchievementRank.Sss }), Is.Empty);
+            Assert.That(engine.FilterScores([scores[0]], filter with { Level = "14" }), Is.Empty);
+            Assert.That(engine.FilterScores([scores[0]], filter with { DifficultyIndex = 4 }), Is.Empty);
+            Assert.That(engine.FilterScores([scores[0]], filter with { Constant = 14.7 }), Is.Empty);
+        });
+    }
+
+    [Test]
+    public void Score_Filter_Should_Prefer_Song_Metadata_And_Fallback_For_Unknown_Songs()
+    {
+        var songs = new[]
+        {
+            CreateSong(1, 14.8, "14+", 3),
+            CreateSong(2, 13.9, "13+", 3),
+            CreateSong(3, 14.8, "14+", 0)
+        };
+        var scores = new[]
+        {
+            CreateScore(1, 100.5, 3, "13+", 13.9),
+            CreateScore(2, 100.5, 3, "14+", 14.8),
+            CreateScore(3, 100.5, 3, "14+", 14.8),
+            CreateScore(999, 100.5, 3, "14+", 14.8),
+            CreateScore(100001, 100.5, 3, "14+", 14.8)
+        };
+        var engine = new MaiValueAnalysisEngine(songs, RecommendationDifficultyCatalog.Empty);
+        var fallback = DivingFishChartStatsCatalog.FromJson("""
+        {"charts":{"999":[{}, {}, {}, {"fit_diff":14.9}]}}
+        """);
+
+        var result = engine.FilterScores(scores, new(Level: "14+", DifficultyIndex: 3, Constant: 14.8));
+        var invalid = scores.Where(x => x.Id is 3 or 100001).ToList();
+        var invalidBuild = engine.Build("tester", 15000, "全成绩", invalid, MaiValueAnalysisMode.Gold);
+        var unknown = scores.Single(x => x.Id == 999);
+        var unknownBuild = engine.Build("tester", 15000, "全成绩", [unknown], MaiValueAnalysisMode.Gold, fallback);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Select(x => x.Id), Is.EqualTo(new long[] { 1, 999 }));
+            Assert.That(engine.RequiresFallback(invalid), Is.False);
+            Assert.That(invalidBuild.SelectedCount, Is.Zero);
+            Assert.That(invalidBuild.MissingCount, Is.Zero);
+            Assert.That(engine.RequiresFallback([unknown]), Is.True);
+            Assert.That(unknownBuild.SelectedCount, Is.EqualTo(1));
+            Assert.That(unknownBuild.AnalyzedCount, Is.EqualTo(1));
+            Assert.That(unknownBuild.TopCharts.Single().OfficialConstant, Is.EqualTo(14.8));
+            Assert.That(unknownBuild.TopCharts.Single().Source, Is.EqualTo("divingFish"));
+        });
+    }
+
+    [Test]
+    public void Score_Filter_Should_Keep_Sd_And_Dx_Charts_With_The_Same_Title()
+    {
+        var songs = new[]
+        {
+            CreateSong(70, 14.8, "14+", 3, "SD", "same-title"),
+            CreateSong(10070, 14.8, "14+", 3, "DX", "same-title")
+        };
+        var scores = new[]
+        {
+            CreateScore(70, 100.5, 3, "14+", 14.8, "SD", "same-title"),
+            CreateScore(10070, 100.5, 3, "14+", 14.8, "DX", "same-title")
+        };
+        var engine = new MaiValueAnalysisEngine(songs);
+
+        var result = engine.FilterScores(scores, new(Level: "14+", DifficultyIndex: 3, Constant: 14.8));
+
+        Assert.That(result.Select(x => x.Id), Is.EqualTo(new long[] { 70, 10070 }));
+    }
+
+    [Test]
+    public void Score_Filter_Should_Use_Strict_Constant_Tolerance_And_Reject_Invalid_Indexes()
+    {
+        var scores = new[]
+        {
+            CreateScore(1, 100.5, 3, "14+", Math.BitIncrement(14.8)),
+            CreateScore(2, 100.5, 3, "14+", 14.8001),
+            CreateScore(3, 100.5, 3, "14+", double.NaN),
+            CreateScore(4, 100.5, 3, "14+", double.PositiveInfinity),
+            CreateScore(5, 100.5, -1, "14+", 14.8),
+            CreateScore(6, 100.5, 5, "14+", 14.8)
+        };
+        var engine = new MaiValueAnalysisEngine([]);
+
+        var result = engine.FilterScores(scores, new(Constant: 14.8));
+
+        Assert.That(result.Select(x => x.Id), Is.EqualTo(new long[] { 1 }));
+    }
+
+    [Test]
+    public void Score_Filter_Should_Deduplicate_Before_Applying_Achievement_Rank()
+    {
+        var scores = new[]
+        {
+            CreateScore(1, 100.0),
+            CreateScore(1, 100.5)
+        };
+        var engine = new MaiValueAnalysisEngine([]);
+
+        var sss = engine.FilterScores(scores, new(Rank: MaiAchievementRank.Sss));
+        var sssPlus = engine.FilterScores(scores, new(Rank: MaiAchievementRank.SssPlus));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sss, Is.Empty);
+            Assert.That(sssPlus.Select(x => x.Achievement), Is.EqualTo(new[] { 100.5 }));
         });
     }
 
@@ -227,12 +445,18 @@ public class MaiValueAnalysisTest
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
     }
 
-    private static MaiMaiSong CreateSong(long id, double constant)
+    private static MaiMaiSong CreateSong(
+        long id,
+        double constant,
+        string? level = null,
+        int levelIdx = 0,
+        string type = "DX",
+        string? title = null)
     {
         dynamic song = new ExpandoObject();
         song.id = id.ToString();
-        song.title = $"song-{id}";
-        song.type = "DX";
+        song.title = title ?? $"song-{id}";
+        song.type = type;
 
         dynamic info = new ExpandoObject();
         info.title = song.title;
@@ -244,27 +468,51 @@ public class MaiValueAnalysisTest
         info.is_new = false;
         song.basic_info = info;
 
-        song.ds = new[] { constant };
-        song.level = new[] { constant.ToString("0.0") };
+        var chartCount = levelIdx + 1;
+        var constants = Enumerable.Repeat(1.0, chartCount).ToArray();
+        var levels = Enumerable.Repeat("1", chartCount).ToArray();
+        constants[levelIdx] = constant;
+        levels[levelIdx] = level ?? DefaultLevel(constant);
+        song.ds = constants;
+        song.level = levels;
 
-        dynamic chart = new ExpandoObject();
-        chart.notes = new long[] { 100, 10, 10, 0 };
-        chart.charter = "tester";
-        song.charts = new[] { chart };
+        var charts = new List<dynamic>();
+        for (var i = 0; i < chartCount; i++)
+        {
+            dynamic chart = new ExpandoObject();
+            chart.notes = new long[] { 100, 10, 10, 0 };
+            chart.charter = "tester";
+            charts.Add(chart);
+        }
+        song.charts = charts;
         return new MaiMaiSong(song);
+
+        static string DefaultLevel(double value)
+        {
+            var integer = (int)Math.Floor(value);
+            var tenths = (int)Math.Round((value - integer) * 10, MidpointRounding.AwayFromZero);
+            return tenths >= 6 ? $"{integer}+" : integer.ToString();
+        }
     }
 
-    private static SongScore CreateScore(long id, double achievement)
+    private static SongScore CreateScore(
+        long id,
+        double achievement,
+        int levelIdx = 0,
+        string level = "14",
+        double constant = 14.0,
+        string type = "DX",
+        string? title = null)
     {
         return new SongScore
         {
             Id = id,
-            Type = "DX",
-            Constant = 14.0,
+            Type = type,
+            Constant = constant,
             Achievement = achievement,
-            LevelIdx = 0,
-            Level = "14.0",
-            Title = $"song-{id}",
+            LevelIdx = levelIdx,
+            Level = level,
+            Title = title ?? $"song-{id}",
             Fc = "",
             Fs = ""
         };

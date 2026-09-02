@@ -798,30 +798,33 @@ public partial class MaiMaiDx
         return MarisaPluginTaskState.CompletedTask;
     }
 
-    [MarisaPluginDoc("分析 B50 中拟合难度高于官方定数的谱面；可用“鸟加含金量分析”等精确档位语法")]
+    [MarisaPluginDoc("分析拟合难度高于官方定数的谱面；支持按评级、等级、谱面难度和官方定数筛选",
+        "无筛选时分析 B50；筛选置于命令前并取交集，如`鸟加 14+ 紫谱 14.8`")]
     [MarisaPluginCommand(true, "含金量分析")]
     private Task<MarisaPluginTaskState> GoldValueAnalysis(Message message)
     {
-        return ValueAnalysis(message, MaiValueAnalysisMode.Gold, null);
+        return ValueAnalysis(message, MaiValueAnalysisMode.Gold, MaiValueAnalysisFilter.Empty);
     }
 
-    [MarisaPluginDoc("分析 B50 中拟合难度低于官方定数的谱面；可用“鸟加水分分析”等精确档位语法")]
+    [MarisaPluginDoc("分析拟合难度低于官方定数的谱面；支持按评级、等级、谱面难度和官方定数筛选",
+        "无筛选时分析 B50；筛选置于命令前并取交集，如`鸟加 14+ 紫谱 14.8`")]
     [MarisaPluginCommand(true, "水分分析")]
     private Task<MarisaPluginTaskState> WaterValueAnalysis(Message message)
     {
-        return ValueAnalysis(message, MaiValueAnalysisMode.Water, null);
+        return ValueAnalysis(message, MaiValueAnalysisMode.Water, MaiValueAnalysisFilter.Empty);
     }
 
     [MarisaPluginNoDoc]
-    [MarisaPluginTrigger(typeof(MaiMaiDx), nameof(RankedValueAnalysisTrigger))]
-    private async Task<MarisaPluginTaskState> RankedValueAnalysis(Message message)
+    [MarisaPluginTrigger(typeof(MaiMaiDx), nameof(FilteredValueAnalysisTrigger),
+        MessageType.GroupMessage | MessageType.FriendMessage | MessageType.TempMessage)]
+    private async Task<MarisaPluginTaskState> FilteredValueAnalysis(Message message)
     {
-        if (!TryParseValueAnalysisCommand(message.Command, out var mode, out var rank) || rank == null)
+        if (!TryParseValueAnalysisCommand(message.Command, out var mode, out var filter) || filter.IsEmpty)
         {
             return MarisaPluginTaskState.NoResponse;
         }
 
-        return await ValueAnalysis(message, mode, rank);
+        return await ValueAnalysis(message, mode, filter);
     }
 
     /// <summary>
