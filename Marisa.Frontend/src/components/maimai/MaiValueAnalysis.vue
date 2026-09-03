@@ -31,20 +31,26 @@
                     <strong>{{ data.AnalyzedCount }}<small>/{{ data.SelectedCount }}</small></strong>
                 </div>
                 <div class="stat-card featured">
-                    <span>平均偏差</span>
+                    <span>{{ isSingleChart ? '该谱面偏差' : '平均偏差' }}</span>
                     <strong :style="{ color: deviationColor(stats.Mean) }">{{ signed(stats.Mean) }}</strong>
                 </div>
                 <div class="stat-card wide">
-                    <span>平均偏差的 95% 置信区间</span>
-                    <strong>{{ signed(stats.MeanCiLow) }} ～ {{ signed(stats.MeanCiHigh) }}</strong>
+                    <template v-if="confidenceInterval">
+                        <span>平均偏差的 Bootstrap 95% 置信区间（n={{ data.AnalyzedCount }}）</span>
+                        <strong>{{ confidenceInterval }}</strong>
+                    </template>
+                    <template v-else>
+                        <span>{{ isSingleChart ? '仅 1 张可拟合谱面' : `谱面数量较少（n=${data.AnalyzedCount}）` }}</span>
+                        <strong class="sample-note">{{ isSingleChart ? '本结果只描述该谱面' : '暂不显示 95% 区间' }}</strong>
+                    </template>
                 </div>
                 <div class="stat-card">
                     <span>中位数</span>
                     <strong>{{ signed(stats.Median) }}</strong>
                 </div>
                 <div class="stat-card">
-                    <span>标准差</span>
-                    <strong>{{ stats.StandardDeviation.toFixed(3) }}</strong>
+                    <span>谱面间标准差</span>
+                    <strong>{{ stats.StandardDeviation == null ? '—' : stats.StandardDeviation.toFixed(3) }}</strong>
                 </div>
                 <div class="stat-card wide">
                     <span>偏差范围</span>
@@ -115,10 +121,10 @@ import MaiCardShell from '@/components/maimai/MaiCardShell.vue'
 
 interface AnalysisStatistics {
     Mean: number
-    MeanCiLow: number
-    MeanCiHigh: number
+    MeanCiLow: number | null
+    MeanCiHigh: number | null
     Median: number
-    StandardDeviation: number
+    StandardDeviation: number | null
     Minimum: number
     Maximum: number
 }
@@ -171,6 +177,13 @@ axios.get(context_get, {params: {id: route.query.id, name: 'analysis'}})
 
 const stats = computed(() => data.value!.Statistics)
 const isGold = computed(() => data.value?.Mode === 'gold')
+const isSingleChart = computed(() => data.value?.AnalyzedCount === 1)
+const confidenceInterval = computed(() => {
+    const current = stats.value
+    return current.MeanCiLow == null || current.MeanCiHigh == null
+        ? null
+        : `${signed(current.MeanCiLow)} ～ ${signed(current.MeanCiHigh)}`
+})
 const title = computed(() => isGold.value ? '含金量分析' : '水分分析')
 const listTitle = computed(() =>
     `${isGold.value ? '最具含金量谱面' : '最水谱面'}TOP${data.value?.TopCharts.length ?? 0}`)
@@ -245,6 +258,7 @@ h1 { font-family: 'Microsoft YaHei',sans-serif; font-size: 38px; font-weight: 90
 .stat-card.featured { background: rgba(255,255,255,0.07); }
 .stat-card span { display: block; font-family: 'Microsoft YaHei',sans-serif; font-size: 12px; color: rgba(255,255,255,0.5); }
 .stat-card strong { display: block; margin-top: 8px; font-family: 'Torus',sans-serif; font-size: 24px; line-height: 1; font-weight: 900; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stat-card strong.sample-note { font-family: 'Microsoft YaHei',sans-serif; font-size: 18px; }
 .stat-card small { margin-left: 4px; font-size: 14px; color: rgba(255,255,255,0.4); }
 
 .section-head { display: flex; align-items: center; gap: 14px; }

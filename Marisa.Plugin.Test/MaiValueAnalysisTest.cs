@@ -160,13 +160,15 @@ public class MaiValueAnalysisTest
             Assert.That(gold.TopCharts[0].Source, Is.EqualTo("divingFish"));
             Assert.That(gold.TopCharts[1].Source, Is.EqualTo("curve"));
             Assert.That(gold.Statistics!.Mean, Is.EqualTo(1.0 / 6).Within(0.000001));
-            Assert.That(gold.Statistics.MeanCiLow, Is.LessThan(gold.Statistics.Mean));
-            Assert.That(gold.Statistics.MeanCiHigh, Is.GreaterThan(gold.Statistics.Mean));
+            Assert.That(gold.Statistics.MeanCiLow, Is.Null);
+            Assert.That(gold.Statistics.MeanCiHigh, Is.Null);
+            Assert.That(gold.Statistics.StandardDeviation, Is.Not.Null);
+            Assert.That(gold.Statistics, Is.EqualTo(water.Statistics));
         });
     }
 
     [Test]
-    public void Zero_Deviation_Control_Should_Remain_Exactly_Null()
+    public void Single_Chart_Control_Should_Not_Estimate_Uncertainty()
     {
         var curve = RecommendationDifficultyCatalog.FromJson("""
         {"1":{"charts":[{"li":0,"ds":14.0,"kind":"fitted_ds","curve":[[15000,14.0]],"pooled":0.0}]}}
@@ -180,9 +182,106 @@ public class MaiValueAnalysisTest
         {
             Assert.That(engine.RequiresFallback([CreateScore(1, 100.5)]), Is.False);
             Assert.That(result.Statistics!.Mean, Is.Zero);
+            Assert.That(result.Statistics.MeanCiLow, Is.Null);
+            Assert.That(result.Statistics.MeanCiHigh, Is.Null);
+            Assert.That(result.Statistics.StandardDeviation, Is.Null);
+            Assert.That(result.Statistics.Median, Is.Zero);
+            Assert.That(result.Statistics.Minimum, Is.Zero);
+            Assert.That(result.Statistics.Maximum, Is.Zero);
+            Assert.That(result.TopCharts.Single().Deviation, Is.Zero);
+        });
+    }
+
+    [TestCase(1, false, false)]
+    [TestCase(2, true, false)]
+    [TestCase(9, true, false)]
+    [TestCase(10, true, true)]
+    [TestCase(11, true, true)]
+    public void Uncertainty_Should_Require_Enough_Analyzed_Charts(
+        int count,
+        bool hasStandardDeviation,
+        bool hasConfidenceInterval)
+    {
+        var songs = Enumerable.Range(1, count).Select(id => CreateSong(id, 14.0)).ToList();
+        var scores = Enumerable.Range(1, count).Select(id => CreateScore(id, 100.5)).ToList();
+        var engine = new MaiValueAnalysisEngine(songs, RecommendationDifficultyCatalog.Empty);
+
+        var result = engine.Build(
+            "tester",
+            15000,
+            "全成绩",
+            scores,
+            MaiValueAnalysisMode.Gold,
+            CreateFallbackCatalog(count));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.SelectedCount, Is.EqualTo(count));
+            Assert.That(result.AnalyzedCount, Is.EqualTo(count));
+            Assert.That(result.TopCharts, Has.Count.EqualTo(Math.Min(10, count)));
+            Assert.That(result.Statistics, Is.Not.Null);
+            Assert.That(result.Statistics!.StandardDeviation.HasValue, Is.EqualTo(hasStandardDeviation));
+            Assert.That(result.Statistics.MeanCiLow.HasValue, Is.EqualTo(hasConfidenceInterval));
+            Assert.That(result.Statistics.MeanCiHigh.HasValue, Is.EqualTo(hasConfidenceInterval));
+            if (hasStandardDeviation) Assert.That(result.Statistics.StandardDeviation, Is.GreaterThan(0));
+            if (hasConfidenceInterval)
+            {
+                Assert.That(result.Statistics.MeanCiLow, Is.LessThan(result.Statistics.Mean));
+                Assert.That(result.Statistics.MeanCiHigh, Is.GreaterThan(result.Statistics.Mean));
+            }
+        });
+    }
+
+    [Test]
+    public void Ten_Identical_Charts_Should_Have_A_Zero_Width_Confidence_Interval()
+    {
+        const int count = 10;
+        var songs = Enumerable.Range(1, count).Select(id => CreateSong(id, 14.0)).ToList();
+        var scores = Enumerable.Range(1, count).Select(id => CreateScore(id, 100.5)).ToList();
+        var engine = new MaiValueAnalysisEngine(songs, RecommendationDifficultyCatalog.Empty);
+
+        var result = engine.Build(
+            "tester",
+            15000,
+            "全成绩",
+            scores,
+            MaiValueAnalysisMode.Gold,
+            CreateFallbackCatalog(count, _ => 14.0));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Statistics!.StandardDeviation, Is.Zero);
             Assert.That(result.Statistics.MeanCiLow, Is.Zero);
             Assert.That(result.Statistics.MeanCiHigh, Is.Zero);
-            Assert.That(result.TopCharts.Single().Deviation, Is.Zero);
+        });
+    }
+
+    [TestCase(9, false)]
+    [TestCase(10, true)]
+    public void Confidence_Threshold_Should_Use_Analyzed_Not_Selected_Count(
+        int analyzedCount,
+        bool hasConfidenceInterval)
+    {
+        const int selectedCount = 12;
+        var songs = Enumerable.Range(1, selectedCount).Select(id => CreateSong(id, 14.0)).ToList();
+        var scores = Enumerable.Range(1, selectedCount).Select(id => CreateScore(id, 100.5)).ToList();
+        var engine = new MaiValueAnalysisEngine(songs, RecommendationDifficultyCatalog.Empty);
+
+        var result = engine.Build(
+            "tester",
+            15000,
+            "全成绩",
+            scores,
+            MaiValueAnalysisMode.Gold,
+            CreateFallbackCatalog(analyzedCount));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.SelectedCount, Is.EqualTo(selectedCount));
+            Assert.That(result.AnalyzedCount, Is.EqualTo(analyzedCount));
+            Assert.That(result.MissingCount, Is.EqualTo(selectedCount - analyzedCount));
+            Assert.That(result.Statistics!.MeanCiLow.HasValue, Is.EqualTo(hasConfidenceInterval));
+            Assert.That(result.Statistics.MeanCiHigh.HasValue, Is.EqualTo(hasConfidenceInterval));
         });
     }
 
@@ -443,6 +542,19 @@ public class MaiValueAnalysisTest
     private static HttpResponseMessage JsonResponse(string json)
     {
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
+    }
+
+    private static DivingFishChartStatsCatalog CreateFallbackCatalog(
+        int count,
+        Func<int, double>? fittedConstant = null)
+    {
+        var charts = Enumerable.Range(1, count).Select(id =>
+        {
+            var value = (fittedConstant?.Invoke(id) ?? 13.75 + id * 0.05)
+                .ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+            return $"\"{id}\":[{{\"fit_diff\":{value}}}]";
+        });
+        return DivingFishChartStatsCatalog.FromJson("{\"charts\":{" + string.Join(',', charts) + "}}");
     }
 
     private static MaiMaiSong CreateSong(

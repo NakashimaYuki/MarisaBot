@@ -301,10 +301,10 @@ public sealed record MaiValueAnalysisItem(
 
 public sealed record MaiValueAnalysisStatistics(
     double Mean,
-    double MeanCiLow,
-    double MeanCiHigh,
+    double? MeanCiLow,
+    double? MeanCiHigh,
     double Median,
-    double StandardDeviation,
+    double? StandardDeviation,
     double Minimum,
     double Maximum);
 
@@ -323,6 +323,8 @@ public sealed record MaiValueAnalysisCardData(
 
 public sealed class MaiValueAnalysisEngine
 {
+    private const int MinimumConfidenceSampleSize = 10;
+
     private readonly Dictionary<long, MaiMaiSong> _songs;
     private readonly RecommendationDifficultyCatalog _curveCatalog;
 
@@ -486,8 +488,15 @@ public sealed class MaiValueAnalysisEngine
 
         var values = items.Select(x => x.Deviation).Order().ToArray();
         var mean = values.Average();
-        var standardDeviation = Math.Sqrt(values.Sum(x => Math.Pow(x - mean, 2)) / values.Length);
-        var (ciLow, ciHigh) = BootstrapMeanConfidenceInterval(values);
+        double? standardDeviation = values.Length == 1
+            ? null
+            : Math.Sqrt(values.Sum(x => Math.Pow(x - mean, 2)) / values.Length);
+        double? ciLow = null;
+        double? ciHigh = null;
+        if (values.Length >= MinimumConfidenceSampleSize)
+        {
+            (ciLow, ciHigh) = BootstrapMeanConfidenceInterval(values);
+        }
 
         return new MaiValueAnalysisStatistics(
             mean,
