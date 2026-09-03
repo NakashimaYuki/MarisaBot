@@ -30,6 +30,7 @@ import MaiDifficultyCurve from "@/components/maimai/MaiDifficultyCurve.vue";
 import MaiChartPreview from "@/components/maimai/MaiChartPreview.vue";
 import MaiCurveRank from "@/components/maimai/MaiCurveRank.vue";
 import MaiDanCourse from "@/components/maimai/MaiDanCourse.vue";
+import MaiValueAnalysis from "@/components/maimai/MaiValueAnalysis.vue";
 import Friberg from "@/components/game/Friberg.vue";
 
 
@@ -46,6 +47,7 @@ const routes = [
     {path: '/maimai/chart', component: MaiChartPreview},
     {path: '/maimai/curve-rank', component: MaiCurveRank},
     {path: '/maimai/dan-course', component: MaiDanCourse},
+    {path: '/maimai/value-analysis', component: MaiValueAnalysis},
     {path: '/chunithm/best', component: ChuBestScores},
     {path: '/chunithm/summary', component: ChunithmSummary},
     {path: '/chunithm/overpower', component: OverPowerAll},

@@ -75,6 +75,18 @@ public class DispatcherTest
         get
         {
             yield return new TestCaseData(CreateMessage(new MessageDataText("mai b50")), typeof(MaiMaiDx), "B50").SetName("MaimaiDX");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 含金量分析")), typeof(MaiMaiDx), "GoldValueAnalysis").SetName("mai gold analysis");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 水分分析")), typeof(MaiMaiDx), "WaterValueAnalysis").SetName("mai water analysis");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 鸟加含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai bird plus gold analysis");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai SSS+ 水分分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai SSS plus water analysis");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai D含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai D gold analysis");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 14+含金量分析")) with { Type = MessageType.GroupMessage }, typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai level gold analysis in group");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 13.9 水分分析")) with { Type = MessageType.FriendMessage }, typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai constant water analysis in friend");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai MASTER含金量分析")) with { Type = MessageType.TempMessage }, typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai master gold analysis in temp");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 白谱 水分分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai remaster water analysis");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai Re:MASTER 14.8 SSS+ 含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai combined value analysis");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 鸟＋14＋紫谱14．8水分分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai compact full-width value analysis");
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 1 14.8含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai preserves filter whitespace boundaries");
             yield return new TestCaseData(CreateMessage(new MessageDataSignServerLose("")), typeof(EventHandler), null).SetName("SignServer");
             yield return new TestCaseData(CreateMessage(new MessageDataBotOffline()), typeof(EventHandler), null).SetName("Online");
             yield return new TestCaseData(CreateMessage(new MessageDataBotOnline()), typeof(EventHandler), null).SetName("Offline");
@@ -107,6 +119,22 @@ public class DispatcherTest
             yield return new TestCaseData(CreateMessage(new MessageDataText("chu sum b 15")), typeof(Chunithm), "SummarySongBpm").SetName("chu sum b");
 
             yield return new TestCaseData(CreateMessage(new MessageDataText("mai sum bpm 15")), typeof(MaiMaiDx), "SummarySongBase").SetName("chu sum bpm");
+
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 双星含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai rejects invented double star rank");
+
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai SSS++含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai rejects invalid achievement rank");
+
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 15+含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai rejects invalid level");
+
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 14.80水分分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai rejects invalid constant");
+
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai MASTER EXPERT含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai rejects duplicate difficulty");
+
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 14 13+水分分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai rejects duplicate level");
+
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai S S含金量分析")), typeof(MaiMaiDx), "FilteredValueAnalysis").SetName("mai rejects ranks separated by whitespace");
+
+            yield return new TestCaseData(CreateMessage(new MessageDataText("mai 含金量分析 extra")), typeof(MaiMaiDx), "GoldValueAnalysis").SetName("mai gold analysis is exact");
 
             yield return new TestCaseData(CreateMessage(new MessageDataText("mai best")) with
             {

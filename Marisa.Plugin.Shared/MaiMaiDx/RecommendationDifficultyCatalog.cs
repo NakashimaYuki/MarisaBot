@@ -62,6 +62,18 @@ public sealed class RecommendationDifficultyCatalog
         return true;
     }
 
+    public bool TryGetPooled(long songId, int levelIdx, out double fittedDifficulty)
+    {
+        fittedDifficulty = 0;
+        if (!_songs.TryGetValue(songId, out var song)) return false;
+
+        var chart = song.Charts.FirstOrDefault(x => x.LevelIndex == levelIdx);
+        if (chart is not { Kind: "fitted_ds", Pooled: not null }) return false;
+
+        fittedDifficulty = chart.Constant + chart.Pooled.Value;
+        return true;
+    }
+
     private static double Interpolate(IReadOnlyList<double[]> curve, int rating)
     {
         for (var i = 1; i < curve.Count; i++)

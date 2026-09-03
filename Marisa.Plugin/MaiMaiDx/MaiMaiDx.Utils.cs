@@ -77,6 +77,94 @@ public partial class MaiMaiDx
 
     #endregion
 
+    #region value analysis
+
+    private static bool TryParseValueAnalysisCommand(
+        ReadOnlyMemory<char> command,
+        out MaiValueAnalysisMode mode,
+        out MaiValueAnalysisFilter filter)
+    {
+        mode = default;
+        filter = MaiValueAnalysisFilter.Empty;
+        var input = command.ToString().Trim();
+
+        const string goldSuffix = "含金量分析";
+        const string waterSuffix = "水分分析";
+        string filterToken;
+        if (input.EndsWith(goldSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            mode        = MaiValueAnalysisMode.Gold;
+            filterToken = input[..^goldSuffix.Length].Trim();
+        }
+        else if (input.EndsWith(waterSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            mode        = MaiValueAnalysisMode.Water;
+            filterToken = input[..^waterSuffix.Length].Trim();
+        }
+        else
+        {
+            return false;
+        }
+
+        return filterToken.Length == 0 || MaiValueAnalysisFilters.TryParse(filterToken, out filter);
+    }
+
+    private static bool FilteredValueAnalysisTrigger(Message message, IServiceProvider _serviceProvider)
+    {
+        return TryParseValueAnalysisCommand(message.Command, out _, out var filter) && !filter.IsEmpty;
+    }
+
+    private async Task<MarisaPluginTaskState> ValueAnalysis(
+        Message message,
+        MaiValueAnalysisMode mode,
+        MaiValueAnalysisFilter filter)
+    {
+        var fetcher = GetDataFetcher(message);
+        var rating  = await fetcher.GetRating(message);
+        var engine  = new MaiValueAnalysisEngine(SongDb.SongList);
+        IReadOnlyList<SongScore> scores;
+        string scope;
+        if (filter.IsEmpty)
+        {
+            scores = rating.OldScores.Concat(rating.NewScores).ToList();
+            scope  = "B50";
+        }
+        else
+        {
+            scores = engine.FilterScores((await fetcher.GetScores(message)).Values, filter);
+            scope  = MaiValueAnalysisFilters.Scope(filter);
+        }
+
+        if (scores.Count == 0)
+        {
+            message.Reply(filter.IsEmpty ? "当前 B50 中没有可分析的成绩" : "没有符合筛选条件的成绩");
+            return MarisaPluginTaskState.CompletedTask;
+        }
+
+        var fallback = engine.RequiresFallback(scores)
+            ? await DivingFishChartStatsProvider.Default.GetAsync()
+            : DivingFishChartStatsCatalog.Empty;
+        var data = engine.Build(
+            rating.Nickname,
+            rating.Rating,
+            scope,
+            scores,
+            mode,
+            fallback);
+
+        if (data.AnalyzedCount == 0)
+        {
+            message.Reply("这些成绩目前都没有可用的拟合定数");
+            return MarisaPluginTaskState.CompletedTask;
+        }
+
+        var context = new WebContext(new { analysis = data });
+        message.Reply(MessageDataImage.FromBase64(await WebApi.MaiMaiValueAnalysis(context.Id)));
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    #endregion
+
     #region recommend
 
     private MaiMaiRecommendationEngine CreateRecommendationEngine()
