@@ -4,7 +4,7 @@
                         :bpm="data.Song.Bpm" :genre="data.Song.Genre" :is-new="data.Song.IsNew"/>
         <div class="flex items-end gap-5 mt-7">
             <MaiCover :song-id="data.Song.Id" :size="132" :frame-radius="22" :img-radius="16"/>
-            <MaiSongHeading :title="data.Song.Title" :artist="data.Song.Artist" :max="84" :min="28"
+            <MaiSongHeading :title="data.Song.Title" :artist="data.Song.Artist" :max="84" :min="1"
                             :artist-size="20" :artist-top="12"/>
         </div>
         <div class="flex items-center gap-4 mt-8 mb-4">
