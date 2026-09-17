@@ -1,0 +1,109 @@
+using Marisa.Plugin.Shared.Dialog;
+
+namespace Marisa.Plugin.Shared.DivingFish;
+
+public sealed class DivingFishDeviceBindingSession(
+    Message message,
+    string game,
+    Dialog.Dialog.MessageHandler handler,
+    TimeProvider timeProvider)
+{
+    private readonly object _gate = new();
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly (long?, long?) _key = (message.GroupInfo?.Id, message.Sender.Id);
+    private readonly DateTimeOffset _deadline = timeProvider.GetUtcNow().AddMinutes(10);
+    private (string Sub, string Scope)? _pending;
+    private bool _finished;
+
+    public async Task RunAsync(DivingFishOAuth.DeviceAuthorization device)
+    {
+        try
+        {
+            await Task.WhenAll(ExpireAsync(), PollAsync());
+        }
+        finally
+        {
+            lock (_gate) _lifetime.Dispose();
+        }
+
+        async Task ExpireAsync()
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMinutes(10), timeProvider, _lifetime.Token);
+                lock (_gate)
+                {
+                    if (Finish()) message.Reply("绑定已取消");
+                }
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+            {
+            }
+        }
+
+        async Task PollAsync()
+        {
+            try
+            {
+                var result = await DivingFishOAuth.WaitForDeviceAuthorization(device, game, _lifetime.Token, timeProvider);
+                lock (_gate)
+                {
+                    if (_finished) return;
+                    if (!DialogManager.TryGetDialog(_key, out var current) || current != handler)
+                    {
+                        Finish();
+                        return;
+                    }
+
+                    if (timeProvider.GetUtcNow() >= _deadline)
+                    {
+                        if (Finish()) message.Reply("绑定已取消");
+                        return;
+                    }
+
+                    _pending = (result.Sub, result.Token.Scope);
+                    message.Reply("授权已完成，如果是你本人操作的请回复收到");
+                }
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+            {
+            }
+            catch (Exception e)
+            {
+                lock (_gate)
+                {
+                    if (Finish()) message.Reply($"DivingFish OAuth 绑定失败：{e.Message}");
+                }
+            }
+        }
+    }
+
+    public MarisaPluginTaskState Confirm(Message next)
+    {
+        lock (_gate)
+        {
+            var result = _pending;
+            if (!Finish()) return MarisaPluginTaskState.CompletedTask;
+
+            if (!string.Equals(next.Command.Trim().ToString(), "收到", StringComparison.Ordinal) ||
+                result is not { } entry || timeProvider.GetUtcNow() >= _deadline)
+            {
+                next.Reply("绑定已取消");
+                return MarisaPluginTaskState.CompletedTask;
+            }
+
+            DivingFishBindingService.Commit(next.Sender.Id, entry.Sub, "", entry.Scope, game);
+            next.Reply("ok");
+            return MarisaPluginTaskState.CompletedTask;
+        }
+    }
+
+    private bool Finish()
+    {
+        if (_finished) return false;
+        _finished = true;
+        _pending = null;
+        _lifetime.Cancel();
+        return DialogManager.RemoveDialog(_key, handler);
+    }
+}

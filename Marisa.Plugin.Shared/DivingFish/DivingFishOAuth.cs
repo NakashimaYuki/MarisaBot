@@ -68,17 +68,19 @@ public static class DivingFishOAuth
     public static async Task<DeviceTokenAuthorization> WaitForDeviceAuthorization(
         DeviceAuthorization authorization,
         string game,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(authorization);
         EnsureClientCredentials();
         var endpoints = await GetEndpoints();
+        timeProvider ??= TimeProvider.System;
         var interval = Math.Max(1, authorization.Interval);
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(authorization.ExpiresIn);
+        var deadline = timeProvider.GetUtcNow().AddSeconds(authorization.ExpiresIn);
 
-        while (DateTimeOffset.UtcNow < deadline)
+        while (timeProvider.GetUtcNow() < deadline)
         {
-            await Task.Delay(TimeSpan.FromSeconds(interval), cancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(interval), timeProvider, cancellationToken);
             using var response = await endpoints.TokenEndpoint
                 .AllowAnyHttpStatus()
                 .PostUrlEncodedAsync(new Dictionary<string, string>

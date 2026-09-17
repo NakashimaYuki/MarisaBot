@@ -30,7 +30,7 @@ public class Dialog : MarisaPluginBase
         }
         catch (Exception e)
         {
-            DialogManager.RemoveDialog(key);
+            DialogManager.RemoveDialog(key, dialogHandler!);
             if (sourcePlugin != null)
             {
                 await sourcePlugin.ExceptionHandler(e, message);
@@ -43,14 +43,14 @@ public class Dialog : MarisaPluginBase
         {
             // 完成了，删除 handler
             case MarisaPluginTaskState.CompletedTask:
-                DialogManager.RemoveDialog(key);
+                DialogManager.RemoveDialog(key, dialogHandler!);
                 return MarisaPluginTaskState.CompletedTask;
             // 处理了一部分，但没有完成，不删除，但是终止 event 传播
             case MarisaPluginTaskState.ToBeContinued:
                 return MarisaPluginTaskState.CompletedTask;
             // handler 没处理，交给其它插件处理
             case MarisaPluginTaskState.NoResponse:
-                DialogManager.RemoveDialog(key);
+                if (!DialogManager.RemoveDialog(key, dialogHandler!)) return await MessageHandler(message);
                 var rep = await MessageHandler(message);
 
                 // If another plugin claimed the same dialog key while we let other plugins run,
@@ -61,7 +61,7 @@ public class Dialog : MarisaPluginBase
             case MarisaPluginTaskState.Canceled:
             // 错误的状态，删除这个异常的 handler（虽然不太可能发生）
             default:
-                DialogManager.RemoveDialog(key);
+                DialogManager.RemoveDialog(key, dialogHandler!);
                 // ReSharper disable once TailRecursiveCall
                 return await MessageHandler(message);
         }
