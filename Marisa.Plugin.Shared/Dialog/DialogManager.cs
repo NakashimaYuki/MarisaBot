@@ -60,6 +60,15 @@ public static class DialogManager
         }
     }
 
+    public static bool RemoveDialog(TKey key, Dialog.MessageHandler handler)
+    {
+        lock (Handlers)
+        {
+            if (!Handlers.TryGetValue(key, out var entry) || entry.Handler != handler) return false;
+            return Handlers.Remove(key);
+        }
+    }
+
     public static bool ContainsDialog(TKey key)
     {
         lock (Handlers)

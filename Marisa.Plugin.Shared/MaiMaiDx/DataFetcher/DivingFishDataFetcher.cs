@@ -103,6 +103,24 @@ public class DivingFishDataFetcher : DataFetcher
             .ToDictionary(x => (x.Id, x.LevelIdx), x => x);
     }
 
+    public override async Task<(string? Nickname, Dictionary<(long Id, int LevelIdx), SongScore> Scores, bool Partial)>
+        GetVersusData(Message message, bool publicOnly)
+    {
+        if (!publicOnly)
+        {
+            var records = await FetchScores(message, true);
+            return (records.Nickname, records.Records.ToDictionary(x => (x.Id, x.LevelIdx), x => x), false);
+        }
+
+        var (username, _) = Chunithm.DataFetcher.DataFetcher.AtOrSelf(message, false);
+        if (username.IsWhiteSpace()) throw new ArgumentException("请填写水鱼账号名");
+
+        // 账号名始终走公开 B50，不随 OAuth/developer token 配置升级为完整成绩查询。
+        var rating = ToDxRating(await FetchScoresByUsername(username));
+        return (rating.Nickname, rating.OldScores.Concat(rating.NewScores)
+            .ToDictionary(x => (x.Id, x.LevelIdx), x => x), true);
+    }
+
     public override async Task<(string? Nickname, Dictionary<int, SongScore> Scores)> GetSongScore(Message message, MaiMaiSong song)
     {
         var (username, qq) = Chunithm.DataFetcher.DataFetcher.AtOrSelf(message, true);
