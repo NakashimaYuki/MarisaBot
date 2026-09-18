@@ -24,7 +24,7 @@ public class MaiMaiVersusDialogTest
     public async Task CanNavigateBothWaysIncludingLastPageAndCancelWithoutTimeoutReply()
     {
         var session = new Session(41);
-        var run = session.Start();
+        await session.Start();
         Assert.That(session.Rendered, Is.EqualTo(new[] { 1 }));
         Assert.That(await session.Send("p3"), Is.EqualTo(MarisaPluginTaskState.ToBeContinued));
         Assert.That(await session.Send("p1"), Is.EqualTo(MarisaPluginTaskState.ToBeContinued));
@@ -33,7 +33,6 @@ public class MaiMaiVersusDialogTest
         Assert.That(await session.Send("p4"), Is.EqualTo(MarisaPluginTaskState.ToBeContinued));
         Assert.That(session.Rendered, Is.EqualTo(new[] { 1, 3, 2 }));
         Assert.That(await session.Send("取消"), Is.EqualTo(MarisaPluginTaskState.CompletedTask));
-        await run.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.That(DialogManager.ContainsDialog(session.Key), Is.False);
         Assert.That(session.TextReplies(), Does.Not.Contain("超时"));
     }
@@ -51,7 +50,8 @@ public class MaiMaiVersusDialogTest
     public async Task TimeoutClosesOnlyItsOwnDialog()
     {
         var session = new Session(21);
-        await session.Start(TimeSpan.FromMilliseconds(80)).WaitAsync(TimeSpan.FromSeconds(2));
+        await session.Start(TimeSpan.FromMilliseconds(80));
+        await Task.Delay(180);
         Assert.That(DialogManager.ContainsDialog(session.Key), Is.False);
         Assert.That(session.TextReplies(), Does.Contain("已超时"));
     }
@@ -60,13 +60,13 @@ public class MaiMaiVersusDialogTest
     public async Task ExpiredSessionCannotDeleteReplacementDialog()
     {
         var session = new Session(21);
-        var run = session.Start(TimeSpan.FromMilliseconds(150));
+        await session.Start(TimeSpan.FromMilliseconds(150));
         DialogManager.RemoveDialog(session.Key);
         Shared.Dialog.Dialog.MessageHandler replacement = _ => Task.FromResult(MarisaPluginTaskState.ToBeContinued);
         Assert.That(DialogManager.TryAddDialog(session.Key, replacement), Is.True);
         try
         {
-            await run.WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.Delay(250);
             Assert.That(DialogManager.TryGetDialog(session.Key, out var actual), Is.True);
             Assert.That(actual, Is.SameAs(replacement));
             Assert.That(session.TextReplies(), Does.Not.Contain("超时"));
@@ -78,9 +78,8 @@ public class MaiMaiVersusDialogTest
     public async Task OtherCommandsEndPagingAndArePassedToOtherPlugins()
     {
         var session = new Session(21);
-        var run = session.Start();
+        await session.Start();
         Assert.That(await session.Send("mai info 22"), Is.EqualTo(MarisaPluginTaskState.Canceled));
-        await run.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.That(DialogManager.ContainsDialog(session.Key), Is.False);
         Assert.That(session.TextReplies(), Is.Empty);
     }
@@ -89,9 +88,8 @@ public class MaiMaiVersusDialogTest
     public async Task RenderFailureIsPropagatedAndReleasesPaging()
     {
         var session = new Session(21) { FailPage = 2 };
-        var run = session.Start();
+        await session.Start();
         Assert.ThrowsAsync<InvalidOperationException>(async () => await session.Send("p2"));
-        await run.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.That(DialogManager.ContainsDialog(session.Key), Is.False);
     }
 

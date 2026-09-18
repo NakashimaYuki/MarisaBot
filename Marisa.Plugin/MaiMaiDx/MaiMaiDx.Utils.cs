@@ -63,42 +63,30 @@ public partial class MaiMaiDx
         if (batch.PageCount == 1) return;
 
         var key = (message.GroupInfo?.Id, message.Sender.Id);
-        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var gate = new SemaphoreSlim(1, 1);
         var closed = false;
-        Shared.Dialog.Dialog.MessageHandler handler = HandlePage;
+        Shared.Dialog.Dialog.MessageHandler handler = null!;
+        handler = HandlePage;
         if (!DialogManager.TryAddDialog(key, handler, this))
         {
             message.Reply("当前已有对话进行中，无法开启翻页");
             return;
         }
 
-        try
+        _ = Task.Run(async () =>
         {
-            await ended.Task.WaitAsync(lifetime ?? TimeSpan.FromMinutes(10));
-        }
-        catch (TimeoutException)
-        {
+            await Task.Delay(lifetime ?? TimeSpan.FromMinutes(10));
             await gate.WaitAsync();
             try
             {
                 if (!closed && DialogManager.RemoveDialog(key, handler))
+                {
+                    closed = true;
                     message.Reply("批量对战翻页已超时");
-                closed = true;
+                }
             }
             finally { gate.Release(); }
-        }
-        finally
-        {
-            await gate.WaitAsync();
-            try
-            {
-                closed = true;
-                DialogManager.RemoveDialog(key, handler);
-            }
-            finally { gate.Release(); }
-        }
-        return;
+        });
 
         async Task<MarisaPluginTaskState> HandlePage(Message next)
         {
@@ -111,14 +99,14 @@ public partial class MaiMaiDx
                                           command.Equals("cancel", StringComparison.OrdinalIgnoreCase)))
                 {
                     closed = true;
-                    ended.TrySetResult();
+                    DialogManager.RemoveDialog(key, handler);
                     next.Reply("已取消批量对战翻页");
                     return MarisaPluginTaskState.CompletedTask;
                 }
                 if (!next.IsPlainText() || command.Length == 0 || command[0] is not ('p' or 'P'))
                 {
                     closed = true;
-                    ended.TrySetResult();
+                    DialogManager.RemoveDialog(key, handler);
                     return MarisaPluginTaskState.Canceled;
                 }
                 if (!int.TryParse(command[1..], out var page) || page < 1 || page > batch.PageCount)
@@ -133,7 +121,7 @@ public partial class MaiMaiDx
             catch
             {
                 closed = true;
-                ended.TrySetResult();
+                DialogManager.RemoveDialog(key, handler);
                 throw;
             }
             finally { gate.Release(); }
