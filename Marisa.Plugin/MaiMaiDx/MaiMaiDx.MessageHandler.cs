@@ -39,7 +39,7 @@ public partial class MaiMaiDx
     [MarisaPluginDoc("绑定某个查分器")]
     [MarisaPluginCommand("bind", "绑定")]
     [MarisaPluginTrigger(nameof(MarisaPluginTrigger.PlainTextTrigger))]
-    private Task<MarisaPluginTaskState> Bind(Message message)
+    private Task<MarisaPluginTaskState> Bind(Message message, TimeProvider timeProvider)
     {
         var servers = new[]
         {
@@ -53,8 +53,7 @@ public partial class MaiMaiDx
 
         var stat   = 0;
         string? oauthVerifier = null;
-        (string Sub, string Game, string Scope)? pendingDeviceBinding = null;
-        CancellationTokenSource? deviceBindingTimeout = null;
+        DivingFishDeviceBindingSession? deviceBinding = null;
 
         MarisaPluginTaskState DoBind(Message msg, string srv)
         {
@@ -70,7 +69,10 @@ public partial class MaiMaiDx
             return MarisaPluginTaskState.CompletedTask;
         }
 
-        DialogManager.TryAddDialog((message.GroupInfo?.Id, message.Sender.Id), async next =>
+        DialogManager.TryAddDialog((message.GroupInfo?.Id, message.Sender.Id), HandleBindingMessage, this);
+        return Task.FromResult(MarisaPluginTaskState.CompletedTask);
+
+        async Task<MarisaPluginTaskState> HandleBindingMessage(Message next)
         {
             switch (stat)
             {
@@ -107,28 +109,9 @@ public partial class MaiMaiDx
                                 $"请打开水鱼授权链接完成绑定（{device.ExpiresIn / 60} 分钟内有效）：\n{device.VerificationUriComplete}\n\n用户码：{device.UserCode}"));
 
                             stat = 30;
-                            var deviceKey = (message.GroupInfo?.Id, message.Sender.Id);
-                            deviceBindingTimeout = new CancellationTokenSource();
-                            _ = Task.Delay(TimeSpan.FromMinutes(10), deviceBindingTimeout.Token).ContinueWith(t =>
-                            {
-                                if (t.IsCanceled) return;
-                                DialogManager.RemoveDialog(deviceKey);
-                                message.Reply("绑定已取消");
-                            });
-                            _ = Task.Run(async () =>
-                            {
-                                try
-                                {
-                                    var result = await DivingFishOAuth.WaitForDeviceAuthorization(device, "maimai");
-                                    pendingDeviceBinding = (result.Sub, "maimai", result.Token.Scope);
-                                    message.Reply("绑定已完成，如果是你本人完成了绑定请回复收到");
-                                }
-                                catch (Exception e)
-                                {
-                                    message.Reply($"DivingFish OAuth 绑定失败：{e.Message}");
-                                }
-                            });
-                            return MarisaPluginTaskState.CompletedTask;
+                            deviceBinding = new DivingFishDeviceBindingSession(message, "maimai", HandleBindingMessage, timeProvider);
+                            _ = deviceBinding.RunAsync(device);
+                            return MarisaPluginTaskState.ToBeContinued;
                         }
                     }
 
@@ -190,33 +173,11 @@ public partial class MaiMaiDx
                     }
                 }
                 case 30:
-                {
-                    if (!string.Equals(next.Command.Trim().ToString(), "收到", StringComparison.Ordinal))
-                    {
-                        deviceBindingTimeout?.Cancel();
-                        next.Reply("绑定已取消");
-                        return MarisaPluginTaskState.CompletedTask;
-                    }
-
-                    if (pendingDeviceBinding is not { } entry)
-                    {
-                        deviceBindingTimeout?.Cancel();
-                        next.Reply("绑定已取消");
-                        return MarisaPluginTaskState.CompletedTask;
-                    }
-
-                    deviceBindingTimeout?.Cancel();
-                    pendingDeviceBinding = null;
-                    DivingFishBindingService.Commit(next.Sender.Id, entry.Sub, "", entry.Scope, entry.Game);
-                    next.Reply("ok");
-                    return MarisaPluginTaskState.CompletedTask;
-                }
+                    return deviceBinding!.Confirm(next);
             }
 
             return MarisaPluginTaskState.CompletedTask;
-        }, this);
-
-        return Task.FromResult(MarisaPluginTaskState.CompletedTask);
+        }
     }
 
     #endregion

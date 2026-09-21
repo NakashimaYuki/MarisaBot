@@ -34,6 +34,7 @@ public abstract class BotDriver(
     protected static IServiceCollection Config(Type[] types)
     {
         var sc = new ServiceCollection()
+            .AddSingleton(TimeProvider.System)
             .AddScoped(p => p)
             .AddScoped(p => (ServiceProvider)p)
             .AddScoped<DictionaryProvider>()

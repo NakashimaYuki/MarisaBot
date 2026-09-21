@@ -60,11 +60,11 @@ public static class DialogManager
         }
     }
 
-    public static bool RemoveDialog(TKey key, Dialog.MessageHandler handler)
+    public static bool RemoveDialog(TKey key, Dialog.MessageHandler expectedHandler)
     {
         lock (Handlers)
         {
-            if (!Handlers.TryGetValue(key, out var entry) || entry.Handler != handler) return false;
+            if (!Handlers.TryGetValue(key, out var entry) || entry.Handler != expectedHandler) return false;
             return Handlers.Remove(key);
         }
     }
