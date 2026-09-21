@@ -72,6 +72,9 @@ public static class PlateData
 
         /// <summary>定数：用户输 "13.5" / "14.7" 这种小数（必含小数点），匹 song.Constants[i]。</summary>
         public sealed record Constant(double Value) : Selector(Value.ToString("F1"));
+
+        public sealed record ConstantRange(double Minimum, double Maximum)
+            : Selector($"{Minimum:F1} - {Maximum:F1}");
     }
 
     /// <summary>
@@ -766,19 +769,83 @@ public static class PlateData
         IReadOnlyCollection<string> knownArtists,
         out Query? query,
         out ParseError? error)
+        => TryParseCore(raw, knownCharters, knownArtists, false, out query, out error);
+
+    /// <summary>解析批量范围，不接受成绩阈值或谱师/作曲家。</summary>
+    public static bool TryParseScope(string raw, out Query? query, out ParseError? error)
+        => TryParseCore(raw, [], [], true, out query, out error);
+
+    /// <summary>含定数条件时按歌曲 ID 升序，否则按定数降序。</summary>
+    public static IReadOnlyList<(double Constant, int LevelIdx, MaiMaiSong Song)> SelectScopeCharts(
+        Query query,
+        IEnumerable<MaiMaiSong> songs)
+    {
+        var hasConstant = query.Selectors.Any(s => s is Selector.Constant or Selector.ConstantRange);
+        var selected = SelectCharts(query, songs);
+
+        return (hasConstant
+                ? selected.OrderBy(x => x.Song.Id).ThenBy(x => x.LevelIdx)
+                : selected.OrderByDescending(x => x.Constant).ThenBy(x => x.Song.Id).ThenBy(x => x.LevelIdx))
+            .ToArray();
+    }
+
+    public static IReadOnlyList<(double Constant, int LevelIdx, MaiMaiSong Song)> SelectCharts(
+        Query query,
+        IEnumerable<MaiMaiSong> songs)
+    {
+        var includeRevival = query.Selectors.Any(s => s is Selector.Revival);
+        return songs
+            .SelectMany(song => song.Constants.Select((constant, levelIdx) => (Constant: constant, LevelIdx: levelIdx, Song: song)))
+            .Where(x => query.LevelIdxes.Contains(x.LevelIdx))
+            .Where(x => query.Selectors.All(selector => MatchesSelector(selector, x.Constant, x.LevelIdx, x.Song, includeRevival)))
+            .Where(x => !IsPlateExcludedSong(query, x.Song))
+            .ToArray();
+    }
+
+    public static bool MatchesSelector(
+        Selector selector,
+        double constant,
+        int levelIdx,
+        MaiMaiSong song,
+        bool includeRevival = false) => selector switch
+    {
+        Selector.Plate plate => MatchPlate(plate, song, levelIdx, includeRevival),
+        Selector.Revival => IsRevivalSong(song.Id),
+        Selector.Genre genre => string.Equals(song.Info.Genre, genre.FullName, StringComparison.Ordinal),
+        Selector.Level level => levelIdx < song.Levels.Count &&
+                                string.Equals(song.Levels[levelIdx], level.Label, StringComparison.Ordinal),
+        Selector.Constant value => Math.Abs(constant - value.Value) < 0.05,
+        Selector.ConstantRange range => constant >= range.Minimum - 0.05 && constant <= range.Maximum + 0.05,
+        Selector.Charter charter => levelIdx < song.Charters.Count && MatchCharter(song.Charters[levelIdx], charter.Name),
+        Selector.CharterAlias alias => levelIdx < song.Charters.Count && MatchCharter(song.Charters[levelIdx], alias.Names, alias.Exclude),
+        Selector.Artist artist => !string.IsNullOrEmpty(song.Info.Artist) &&
+                                   song.Info.Artist.Contains(artist.Name, StringComparison.OrdinalIgnoreCase),
+        Selector.CharterOrArtist both =>
+            (levelIdx < song.Charters.Count && MatchCharter(song.Charters[levelIdx], both.Name)) ||
+            (!string.IsNullOrEmpty(song.Info.Artist) && song.Info.Artist.Contains(both.Name, StringComparison.OrdinalIgnoreCase)),
+        _ => false
+    };
+
+    private static bool TryParseCore(
+        string raw,
+        IReadOnlyCollection<string> knownCharters,
+        IReadOnlyCollection<string> knownArtists,
+        bool scopeOnly,
+        out Query? query,
+        out ParseError? error)
     {
         query = null;
         error = null;
 
         var trimmed = raw.Trim();
 
-        if (!trimmed.EndsWith(CommandSuffix, StringComparison.Ordinal))
+        if (!scopeOnly && !trimmed.EndsWith(CommandSuffix, StringComparison.Ordinal))
         {
             error = new(ErrorKind.NotPlateCommand);
             return false;
         }
 
-        var inner = trimmed[..^CommandSuffix.Length].Trim();
+        var inner = scopeOnly ? trimmed : trimmed[..^CommandSuffix.Length].Trim();
 
         if (inner.Length == 0)
         {
@@ -790,7 +857,7 @@ public static class PlateData
         // 名称外部的字段仍留在 parsePart 中按原顺序解析，恰好等于保留 token 的输入仍保持原语义。
         var selectors = new List<Selector>();
         var parsePart = inner;
-        if (TryExtractKnownName(inner, out var nameStart, out var nameLength, out var nameSelector))
+        if (!scopeOnly && TryExtractKnownName(inner, out var nameStart, out var nameLength, out var nameSelector))
         {
             selectors.Add(nameSelector!);
             parsePart = (inner[..nameStart] + inner[(nameStart + nameLength)..]).Trim();
@@ -803,7 +870,7 @@ public static class PlateData
         //    缺省时回落到 DefaultThreshold（"将"=SSS）。
         Threshold? threshold = null;
         int thresholdAt = -1, thresholdLen = 0;
-        foreach (var (token, t) in ThresholdEntriesLongestFirst)
+        foreach (var (token, t) in scopeOnly ? [] : ThresholdEntriesLongestFirst)
         {
             var pos = FindBoundedRightmost(parsePart, token);
             if (pos >= 0)
@@ -875,7 +942,7 @@ public static class PlateData
             // 同长度同位置时（「7.3」vs 定数 7.3）按先检查者胜出 → 别名优先。
             // 别名/定数 token 嵌在 workingPart 内出现的某个真谱师名/身份名里时（如「隅田川星人 13」
             // 的「隅田川」）不参与竞争：让等级等 token 先剥，真名整段落到 precise Charter。
-            if (TryFindRightmostCharterAliasInString(workingPart, out var caStart, out var caLen, out var caSel)
+            if (!scopeOnly && TryFindRightmostCharterAliasInString(workingPart, out var caStart, out var caLen, out var caSel)
                 && !TokenEmbeddedInCharterName(workingPart, caStart, caLen, knownCharters))
             {
                 if (caLen > matchLen || (caLen == matchLen && caStart > matchStart))
@@ -887,6 +954,13 @@ public static class PlateData
             {
                 if (cLen > matchLen || (cLen == matchLen && cStart > matchStart))
                 { matchStart = cStart; matchLen = cLen; matched = cSel; }
+            }
+
+            if (scopeOnly && TryFindRightmostConstantRangeInString(workingPart,
+                    out var crStart, out var crLen, out var crSel))
+            {
+                if (crLen > matchLen || (crLen == matchLen && crStart > matchStart))
+                { matchStart = crStart; matchLen = crLen; matched = crSel; }
             }
 
             if (TryFindRightmostLevelInString(workingPart, out var lStart, out var lLen, out var lSel))
@@ -924,10 +998,19 @@ public static class PlateData
                 error = new(ErrorKind.ConflictingSelector, "类别");
                 return false;
             }
-            if (matched is Selector.Level or Selector.Constant
-                && selectors.Any(s => s is Selector.Level or Selector.Constant))
+            if ((!scopeOnly && matched is Selector.Level or Selector.Constant
+                 && selectors.Any(s => s is Selector.Level or Selector.Constant))
+                || (scopeOnly && matched is Selector.Level && selectors.OfType<Selector.Level>().Any())
+                || (scopeOnly && matched is Selector.Constant or Selector.ConstantRange
+                    && selectors.Any(s => s is Selector.Constant or Selector.ConstantRange)))
             {
                 error = new(ErrorKind.ConflictingSelector, "难度或定数");
+                return false;
+            }
+
+            if (matched is Selector.ConstantRange range && range.Minimum > range.Maximum)
+            {
+                error = new(ErrorKind.UnknownSelector, range.Display);
                 return false;
             }
 
@@ -938,6 +1021,12 @@ public static class PlateData
         // 剩余连续片段当 Charter / Artist
         if (workingPart.Length > 0)
         {
+            if (scopeOnly)
+            {
+                error = new(ErrorKind.UnknownSelector, workingPart);
+                return false;
+            }
+
             var charterHit = TryResolveCharterPrecise(workingPart, knownCharters, out var charterPreciseSel);
             var artistHit  = TryResolveArtist(workingPart, knownArtists, out var artistSel);
 
@@ -969,7 +1058,7 @@ public static class PlateData
 
         if (!difficultyExplicit)
         {
-            if (selectors.Any(s => s is Selector.Level or Selector.Constant))
+            if (selectors.Any(s => s is Selector.Level or Selector.Constant or Selector.ConstantRange))
             {
                 // 指定了等级/定数：该等级/定数的谱面可能分布在任意难度（如 6+ 只在 BASIC/ADVANCED，
                 // 13+ 在 EXPERT/MASTER/Re:MASTER），全难度都查——此时版本代字的「仅 MASTER」默认不适用。
@@ -1599,6 +1688,33 @@ public static class PlateData
             selector = new Selector.Constant(v);
             return true;
         }
+        return false;
+    }
+
+    private static bool TryFindRightmostConstantRangeInString(
+        string s, out int start, out int length, out Selector? selector)
+    {
+        start = -1;
+        length = 0;
+        selector = null;
+        var matches = System.Text.RegularExpressions.Regex.Matches(s,
+            @"(?:定数)?((?:1[0-5]|[1-9])\.\d)\s*[-－~～至]\s*((?:1[0-5]|[1-9])\.\d)");
+        for (var i = matches.Count - 1; i >= 0; i--)
+        {
+            var match = matches[i];
+            var minimum = match.Groups[1];
+            var maximum = match.Groups[2];
+            if (!IsCompleteNumberToken(s, minimum.Index, minimum.Length)
+                || !IsCompleteNumberToken(s, maximum.Index, maximum.Length)) continue;
+
+            start = match.Index;
+            length = match.Length;
+            selector = new Selector.ConstantRange(
+                double.Parse(minimum.Value, System.Globalization.CultureInfo.InvariantCulture),
+                double.Parse(maximum.Value, System.Globalization.CultureInfo.InvariantCulture));
+            return true;
+        }
+
         return false;
     }
 

@@ -8,6 +8,12 @@ namespace Marisa.Plugin.Shared.MaiMaiDx;
 
 public static class MaiMaiDraw
 {
+    public static Task<string> DrawVersusBatch(MaiVersusBatch batch, int page)
+    {
+        var context = new WebContext(new { versusBatch = batch.GetPage(page) });
+        return WebApi.MaiMaiVersusBatch(context.Id);
+    }
+
     /// <summary>
     ///     画汇总表（前端渲染）。把 grouped songs + scores 投到 WebContext，让
     ///     Marisa.Frontend 的 /maimai/summary 页面用 Puppeteer 截图。

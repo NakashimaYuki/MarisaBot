@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Marisa.Configuration;
 using Marisa.Database;
+using Marisa.Plugin.Shared.Dialog;
 using Marisa.Plugin.Shared.MaiMaiDx;
 using Marisa.Plugin.Shared.MaiMaiDx.DataFetcher;
 using Marisa.Plugin.Shared.Util;
@@ -9,6 +10,77 @@ namespace Marisa.Plugin.MaiMaiDx;
 
 public partial class MaiMaiDx
 {
+    private static List<MaiMaiSong> SharedVersusSongs(
+        IEnumerable<MaiMaiSong> songs, int level,
+        IReadOnlyDictionary<(long Id, int LevelIdx), SongScore> left,
+        IReadOnlyDictionary<(long Id, int LevelIdx), SongScore> right) =>
+        songs.Where(song => song.Levels.Count > level && left.ContainsKey((song.Id, level)) &&
+                            right.ContainsKey((song.Id, level))).ToList();
+
+    private static (List<MaiMaiSong> Songs, int LevelIndex, bool Random, PlateData.Query? Scope)
+        ResolveVersusQuery(Shared.Util.SongDb.SongDb<MaiMaiSong> songs, string input)
+    {
+        var query = input.Trim();
+        if (query.Length == 0) return ([], 3, true, null);
+
+        var exact = songs.SearchSongExact(query.AsMemory());
+        if (exact.Count > 0) return (exact, 3, false, null);
+        if (PlateData.DifficultyAliasMap.TryGetValue(query, out var difficulty))
+            return ([], difficulty, true, null);
+
+        var hasAffix = PlateData.TryStripDifficultyAffix(query.AsMemory(), out var level, out var rest);
+        var explicitAffix = PlateData.DifficultyAliasMap.Keys.Any(token =>
+            query.StartsWith(token, StringComparison.OrdinalIgnoreCase) ||
+            query.EndsWith(token, StringComparison.OrdinalIgnoreCase));
+        if (hasAffix && explicitAffix)
+        {
+            exact = songs.SearchSongExact(rest);
+            if (exact.Count > 0) return (exact, level, false, null);
+        }
+
+        // 单字白/紫优先作为版本代字；白谱/紫谱可用于指定单曲难度。
+        if (PlateData.TryParseScope(query, out var scope, out _)) return ([], 3, false, scope);
+        if (hasAffix)
+        {
+            exact = songs.SearchSongExact(rest);
+            if (exact.Count > 0) return (exact, level, false, null);
+        }
+
+        var fuzzy = songs.SearchSong(query.AsMemory());
+        if (fuzzy.Count > 0) return (fuzzy, 3, false, null);
+        return (hasAffix ? songs.SearchSong(rest) : [], hasAffix ? level : 3, false, null);
+    }
+
+    private async Task ReplyBatchVersus(
+        Message message,
+        MaiVersusBatch batch,
+        Func<MaiVersusBatch, int, Task<string>>? render = null)
+    {
+        render ??= MaiMaiDraw.DrawVersusBatch;
+        var firstPage = await render(batch, 1);
+        message.Reply(MessageDataImage.FromBase64(firstPage));
+        if (batch.PageCount == 1) return;
+
+        var key = (message.GroupInfo?.Id, message.Sender.Id);
+        if (!DialogManager.TryAddDialog(key, HandlePage, this)) return;
+
+        async Task<MarisaPluginTaskState> HandlePage(Message next)
+        {
+            if (!next.IsPlainText()) return MarisaPluginTaskState.Canceled;
+
+            var command = next.Command.Trim().ToString();
+            if (command.Length < 2 || command[0] is not ('p' or 'P') ||
+                !int.TryParse(command[1..], out var page) || page < 1 || page > batch.PageCount)
+            {
+                return MarisaPluginTaskState.Canceled;
+            }
+
+            var image = page == 1 ? firstPage : await render(batch, page);
+            next.Reply(MessageDataImage.FromBase64(image));
+            return MarisaPluginTaskState.ToBeContinued;
+        }
+    }
+
     private static string DeviceBindingLabel(long qq)
     {
         var value = qq.ToString();
