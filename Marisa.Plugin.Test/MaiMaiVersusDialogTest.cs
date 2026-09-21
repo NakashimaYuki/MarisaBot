@@ -21,7 +21,7 @@ public class MaiMaiVersusDialogTest
     private static long _nextSender = 800000;
 
     [Test]
-    public async Task CanNavigateBothWaysIncludingLastPageAndCancelWithoutTimeoutReply()
+    public async Task NavigatesValidPagesAndSilentlyDropsNextNormalMessage()
     {
         var session = new Session(41);
         await session.Start();
@@ -29,12 +29,10 @@ public class MaiMaiVersusDialogTest
         Assert.That(await session.Send("p3"), Is.EqualTo(MarisaPluginTaskState.ToBeContinued));
         Assert.That(await session.Send("p1"), Is.EqualTo(MarisaPluginTaskState.ToBeContinued));
         Assert.That(await session.Send("P2"), Is.EqualTo(MarisaPluginTaskState.ToBeContinued));
-        Assert.That(await session.Send("p0"), Is.EqualTo(MarisaPluginTaskState.ToBeContinued));
-        Assert.That(await session.Send("p4"), Is.EqualTo(MarisaPluginTaskState.ToBeContinued));
         Assert.That(session.Rendered, Is.EqualTo(new[] { 1, 3, 2 }));
-        Assert.That(await session.Send("取消"), Is.EqualTo(MarisaPluginTaskState.CompletedTask));
+        Assert.That(await session.Send("下一条普通消息"), Is.EqualTo(MarisaPluginTaskState.Canceled));
         Assert.That(DialogManager.ContainsDialog(session.Key), Is.False);
-        Assert.That(session.TextReplies(), Does.Not.Contain("超时"));
+        Assert.That(session.TextReplies(), Is.Empty);
     }
 
     [Test]
@@ -44,34 +42,6 @@ public class MaiMaiVersusDialogTest
         await session.Start();
         Assert.That(session.Rendered, Is.EqualTo(new[] { 1 }));
         Assert.That(DialogManager.ContainsDialog(session.Key), Is.False);
-    }
-
-    [Test]
-    public async Task TimeoutClosesOnlyItsOwnDialog()
-    {
-        var session = new Session(21);
-        await session.Start(TimeSpan.FromMilliseconds(80));
-        await Task.Delay(180);
-        Assert.That(DialogManager.ContainsDialog(session.Key), Is.False);
-        Assert.That(session.TextReplies(), Does.Contain("已超时"));
-    }
-
-    [Test]
-    public async Task ExpiredSessionCannotDeleteReplacementDialog()
-    {
-        var session = new Session(21);
-        await session.Start(TimeSpan.FromMilliseconds(150));
-        DialogManager.RemoveDialog(session.Key);
-        Shared.Dialog.Dialog.MessageHandler replacement = _ => Task.FromResult(MarisaPluginTaskState.ToBeContinued);
-        Assert.That(DialogManager.TryAddDialog(session.Key, replacement), Is.True);
-        try
-        {
-            await Task.Delay(250);
-            Assert.That(DialogManager.TryGetDialog(session.Key, out var actual), Is.True);
-            Assert.That(actual, Is.SameAs(replacement));
-            Assert.That(session.TextReplies(), Does.Not.Contain("超时"));
-        }
-        finally { DialogManager.RemoveDialog(session.Key); }
     }
 
     [Test]
@@ -111,7 +81,7 @@ public class MaiMaiVersusDialogTest
             _batch = new MaiVersusBatch("彩代", "", "定数降序", charts, player, player);
         }
 
-        public Task Start(TimeSpan? lifetime = null)
+        public Task Start()
         {
             Func<MaiVersusBatch, int, Task<string>> render = (_, page) =>
             {
@@ -120,7 +90,7 @@ public class MaiMaiVersusDialogTest
                 return Task.FromResult("");
             };
             return (Task)typeof(MaiMaiDx.MaiMaiDx).GetMethod("ReplyBatchVersus", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .Invoke(_plugin, [Message(""), _batch, render, lifetime ?? TimeSpan.FromMinutes(1)])!;
+                .Invoke(_plugin, [Message(""), _batch, render])!;
         }
 
         public async Task<MarisaPluginTaskState> Send(string text)
