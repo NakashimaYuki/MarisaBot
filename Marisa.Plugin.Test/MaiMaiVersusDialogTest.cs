@@ -96,7 +96,16 @@ public class MaiMaiVersusDialogTest
         public async Task<MarisaPluginTaskState> Send(string text)
         {
             Assert.That(DialogManager.TryGetDialog(Key, out var handler), Is.True);
-            return await handler!(Message(text));
+            MarisaPluginTaskState result;
+            try { result = await handler!(Message(text)); }
+            catch
+            {
+                DialogManager.RemoveDialog(Key);
+                throw;
+            }
+            if (result is MarisaPluginTaskState.Canceled or MarisaPluginTaskState.CompletedTask)
+                DialogManager.RemoveDialog(Key);
+            return result;
         }
 
         public string TextReplies()
