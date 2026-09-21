@@ -801,7 +801,7 @@ public partial class MaiMaiDx
         return MarisaPluginTaskState.CompletedTask;
     }
 
-    [MarisaPluginDoc("比较双方成绩；不填歌曲时随机选择共同已玩谱面", "`@某人` 或 `水鱼账号名`，可选歌曲/难度，或范围如 `彩代紫谱`、`14+`、`14.0-14.5`；多条件取交集")]
+    [MarisaPluginDoc("比较双方成绩；不填歌曲时随机选择共同已玩谱面", "`@某人` 或 `水鱼账号名`，可选歌曲、难度或完成表范围")]
     [MarisaPluginCommand("vs", "对战")]
     private async Task<MarisaPluginTaskState> SongVersus(Message message)
     {

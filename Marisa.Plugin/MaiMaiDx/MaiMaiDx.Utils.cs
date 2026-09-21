@@ -54,8 +54,7 @@ public partial class MaiMaiDx
     private async Task ReplyBatchVersus(
         Message message,
         MaiVersusBatch batch,
-        Func<MaiVersusBatch, int, Task<string>>? render = null,
-        TimeSpan? lifetime = null)
+        Func<MaiVersusBatch, int, Task<string>>? render = null)
     {
         render ??= MaiMaiDraw.DrawVersusBatch;
         var firstPage = await render(batch, 1);
@@ -63,68 +62,22 @@ public partial class MaiMaiDx
         if (batch.PageCount == 1) return;
 
         var key = (message.GroupInfo?.Id, message.Sender.Id);
-        var gate = new SemaphoreSlim(1, 1);
-        var closed = false;
-        Shared.Dialog.Dialog.MessageHandler handler = null!;
-        handler = HandlePage;
-        if (!DialogManager.TryAddDialog(key, handler, this))
-        {
-            message.Reply("当前已有对话进行中，无法开启翻页");
-            return;
-        }
-
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(lifetime ?? TimeSpan.FromMinutes(10));
-            await gate.WaitAsync();
-            try
-            {
-                if (!closed && DialogManager.RemoveDialog(key, handler))
-                {
-                    closed = true;
-                    message.Reply("批量对战翻页已超时");
-                }
-            }
-            finally { gate.Release(); }
-        });
+        if (!DialogManager.TryAddDialog(key, HandlePage, this)) return;
 
         async Task<MarisaPluginTaskState> HandlePage(Message next)
         {
-            await gate.WaitAsync();
-            try
+            if (!next.IsPlainText()) return MarisaPluginTaskState.Canceled;
+
+            var command = next.Command.Trim().ToString();
+            if (command.Length < 2 || command[0] is not ('p' or 'P') ||
+                !int.TryParse(command[1..], out var page) || page < 1 || page > batch.PageCount)
             {
-                if (closed) return MarisaPluginTaskState.Canceled;
-                var command = next.Command.Trim().ToString();
-                if (next.IsPlainText() && (command.Equals("取消", StringComparison.OrdinalIgnoreCase) ||
-                                          command.Equals("cancel", StringComparison.OrdinalIgnoreCase)))
-                {
-                    closed = true;
-                    DialogManager.RemoveDialog(key, handler);
-                    next.Reply("已取消批量对战翻页");
-                    return MarisaPluginTaskState.CompletedTask;
-                }
-                if (!next.IsPlainText() || command.Length == 0 || command[0] is not ('p' or 'P'))
-                {
-                    closed = true;
-                    DialogManager.RemoveDialog(key, handler);
-                    return MarisaPluginTaskState.Canceled;
-                }
-                if (!int.TryParse(command[1..], out var page) || page < 1 || page > batch.PageCount)
-                {
-                    next.Reply($"请输入 p1-p{batch.PageCount} 翻页，或发送“取消”");
-                    return MarisaPluginTaskState.ToBeContinued;
-                }
-                var image = page == 1 ? firstPage : await render(batch, page);
-                next.Reply(MessageDataImage.FromBase64(image));
-                return MarisaPluginTaskState.ToBeContinued;
+                return MarisaPluginTaskState.Canceled;
             }
-            catch
-            {
-                closed = true;
-                DialogManager.RemoveDialog(key, handler);
-                throw;
-            }
-            finally { gate.Release(); }
+
+            var image = page == 1 ? firstPage : await render(batch, page);
+            next.Reply(MessageDataImage.FromBase64(image));
+            return MarisaPluginTaskState.ToBeContinued;
         }
     }
 
