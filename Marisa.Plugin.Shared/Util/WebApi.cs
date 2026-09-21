@@ -199,6 +199,11 @@ public static class WebApi
         return await RenderUrl("/maimai/versus?id=" + contextId);
     }
 
+    public static async Task<string> MaiMaiVersusBatch(Guid contextId)
+    {
+        return await RenderUrl("/maimai/versus-batch?id=" + contextId);
+    }
+
     public static async Task<string> MaiMaiSongTitles(Guid contextId)
     {
         return await RenderUrl("/maimai/song-titles?id=" + contextId);

@@ -187,6 +187,41 @@ public class SongDb<TSong> : ICanReset where TSong : Song
         return search;
     }
 
+    /// <summary>按完整标题、别名或 ID 搜歌，不使用包含或正则匹配。</summary>
+    public List<TSong> SearchSongExact(ReadOnlyMemory<char> input)
+    {
+        var value = input.Span.Trim();
+        if (value.IsEmpty) return [];
+        var valueText = value.ToString();
+
+        if (long.TryParse(value, out var id))
+        {
+            var byId = SongList.Where(song => song.Id == id).ToList();
+            if (byId.Count > 0) return byId;
+        }
+
+        if (value.StartsWith("id", StringComparison.OrdinalIgnoreCase) &&
+            long.TryParse(value[2..].Trim(), out var explicitId))
+        {
+            return SongList.Where(song => song.Id == explicitId).ToList();
+        }
+
+        var exactTitles = SongList
+            .Where(song => song.Title.Equals(valueText, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (exactTitles.Count > 0) return exactTitles;
+
+        var keys = SongAlias.Keys
+            .Where(alias => alias.Span.Equals(valueText.AsSpan(), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return keys
+            .SelectMany(alias => SongAlias[alias])
+            .SelectMany(title => SongList.Where(song => song.Title.AsSpan().Equals(title.Span, StringComparison.Ordinal)))
+            .DistinctBy(song => song.Id)
+            .ToList();
+    }
+
     private List<TSong> SearchSongByAlias(ReadOnlyMemory<char> alias)
     {
         if (alias.IsWhiteSpace()) return [];

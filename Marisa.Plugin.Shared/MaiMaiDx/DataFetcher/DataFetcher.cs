@@ -15,6 +15,28 @@ public abstract class DataFetcher(SongDb<MaiMaiSong> songDb)
 
     public abstract Task<Dictionary<(long Id, int LevelIdx), SongScore>> GetScores(Message message);
 
+    /// <summary>Partial 数据中缺失的谱面不可判为未游玩。</summary>
+    public virtual async Task<(string? Nickname, Dictionary<(long Id, int LevelIdx), SongScore> Scores, bool Partial)>
+        GetVersusData(Message message, bool publicOnly)
+    {
+        var rating = await GetRating(message);
+        if (publicOnly)
+        {
+            return (rating.Nickname, rating.OldScores.Concat(rating.NewScores)
+                .ToDictionary(x => (x.Id, x.LevelIdx), x => x), true);
+        }
+
+        try
+        {
+            return (rating.Nickname, await GetScores(message), false);
+        }
+        catch (NotSupportedException)
+        {
+            return (rating.Nickname, rating.OldScores.Concat(rating.NewScores)
+                .ToDictionary(x => (x.Id, x.LevelIdx), x => x), true);
+        }
+    }
+
     /// <summary>
     ///     获取某一首歌各难度的个人成绩（单曲成绩卡用）。返回 (昵称, 按难度索引的成绩)；昵称拿不到时为 null。
     ///     默认实现回退为「拉取整个成绩表再筛选」；具体查分器可覆写为各自的「单曲成绩接口」以避免全量拉取。

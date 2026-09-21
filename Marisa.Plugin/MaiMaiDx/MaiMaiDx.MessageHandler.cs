@@ -840,7 +840,7 @@ public partial class MaiMaiDx
         return MarisaPluginTaskState.CompletedTask;
     }
 
-    [MarisaPluginDoc("比较你和另一位玩家的单曲成绩", "`@某人` 或 `水鱼账号名`，可选难度和歌曲")]
+    [MarisaPluginDoc("比较双方成绩；不填歌曲时随机选择共同已玩谱面", "`@某人` 或 `水鱼账号名`，可选歌曲/难度，或范围如 `彩代紫谱`、`14+`、`14.0-14.5`；多条件取交集")]
     [MarisaPluginCommand("vs", "对战")]
     private async Task<MarisaPluginTaskState> SongVersus(Message message)
     {
@@ -867,25 +867,22 @@ public partial class MaiMaiDx
             }
         }
 
-        var levelIdx = 3;
-        var search = SongDb.SearchSong(query.AsMemory());
-        if (search.Count == 0 && PlateData.DifficultyAliasMap.TryGetValue(query, out var exactLevel))
+        var selection = ResolveVersusQuery(SongDb, query);
+        if (selection.Scope is { } batchScope)
+            return await RunBatchVersus(batchScope, query);
+        if (selection.Songs.Count == 0 && !selection.Random)
         {
-            levelIdx = exactLevel;
-            query = "";
+            message.Reply("“查无此歌”");
+            return MarisaPluginTaskState.CompletedTask;
         }
-        else if (search.Count == 0 && PlateData.TryStripDifficultyAffix(query.AsMemory(), out var parsedLevel, out var rest))
-        {
-            levelIdx = parsedLevel;
-            query = rest.ToString();
-            search = SongDb.SearchSong(rest);
-        }
+        var levelIdx = selection.LevelIndex;
+        var search = selection.Songs;
 
         var selfMessage = message with { Command = "".AsMemory() };
         var opponentMessage = message with { Command = opponentName?.AsMemory() ?? "".AsMemory() };
         if (opponentQq is not null)
         {
-            opponentMessage = message with { Command = query.AsMemory() };
+            opponentMessage = message with { Command = "".AsMemory() };
         }
 
         var selfData = await FetchBattleData(selfMessage, false, true);
@@ -908,12 +905,6 @@ public partial class MaiMaiDx
         }
 
         MaiMaiSong? song;
-        if (search.Count == 0 && !string.IsNullOrWhiteSpace(query))
-        {
-            message.Reply("“查无此歌”");
-            return MarisaPluginTaskState.CompletedTask;
-        }
-
         if (search.Count > 1)
         {
             song = await SelectBattleSong(search, message);
@@ -925,11 +916,7 @@ public partial class MaiMaiDx
         }
         else
         {
-            var candidates = SongDb.SongList
-                .Where(x => x.Levels.Count > levelIdx &&
-                            selfData.Scores.ContainsKey((x.Id, levelIdx)) &&
-                            opponentData.Scores.ContainsKey((x.Id, levelIdx)))
-                .ToList();
+            var candidates = SharedVersusSongs(SongDb.SongList, levelIdx, selfData.Scores, opponentData.Scores);
             if (candidates.Count == 0)
             {
                 message.Reply("没有找到双方都已游玩且当前可查询的谱面");
@@ -1023,23 +1010,10 @@ public partial class MaiMaiDx
             try
             {
                 var fetcher = GetDataFetcher(target, allowUsername);
-                var rating = await fetcher.GetRating(target);
-                Dictionary<(long Id, int LevelIdx), SongScore> scores;
-                var partial = allowUsername;
-                try
-                {
-                    scores = await fetcher.GetScores(target);
-                }
-                catch (NotSupportedException)
-                {
-                    partial = true;
-                    scores = rating.OldScores.Concat(rating.NewScores)
-                        .ToDictionary(x => (x.Id, x.LevelIdx), x => x);
-                }
-
-                return new BattleData(rating.Nickname, scores, partial, null);
-                }
-            catch (Exception e)
+                var data = await fetcher.GetVersusData(target, allowUsername);
+                return new BattleData(data.Nickname, data.Scores, data.Partial, null);
+            }
+            catch (HttpRequestException e)
             {
                 return new BattleData(null, new Dictionary<(long, int), SongScore>(), false, e.Message);
             }
@@ -1120,6 +1094,60 @@ public partial class MaiMaiDx
                     .Select(x => $"[ID:{x.Id}, Lv:{x.MaxLevel()}] -> {x.Title}");
                 return string.Join('\n', rows) + $"\n第 {index + 1}/{total} 页，发送歌曲 id 选择，或 p1/p2 翻页";
             }
+        }
+
+        async Task<MarisaPluginTaskState> RunBatchVersus(PlateData.Query scope, string rawScope)
+        {
+            var charts = PlateData.SelectScopeCharts(scope, SongDb.SongList);
+            if (charts.Count == 0)
+            {
+                message.Reply($"没有找到 {rawScope} 对应的谱面");
+                return MarisaPluginTaskState.CompletedTask;
+            }
+
+            var selfMessage = message with { Command = "".AsMemory() };
+            var opponentMessage = message with { Command = opponentName?.AsMemory() ?? "".AsMemory() };
+            if (opponentQq is not null)
+            {
+                opponentMessage = message with { Command = "".AsMemory() };
+            }
+
+            var selfData = await FetchBattleData(selfMessage, false, true);
+            var opponentData = await FetchBattleData(opponentMessage, opponentName != null, false);
+            if (selfData.Error is not null || opponentData.Error is not null)
+            {
+                if (opponentQq is not null &&
+                    (opponentData.Error?.Contains("OAuth", StringComparison.OrdinalIgnoreCase) == true ||
+                     opponentData.Error?.Contains("未绑定水鱼", StringComparison.OrdinalIgnoreCase) == true))
+                {
+                    new MessageBuilder(message)
+                        .Text("水鱼 OAuth 对手尚未绑定，请先让对手发送 mai 绑定完成授权")
+                        .At(opponentQq.Value)
+                        .Reply();
+                    return MarisaPluginTaskState.CompletedTask;
+                }
+
+                message.Reply(selfData.Error ?? opponentData.Error!);
+                return MarisaPluginTaskState.CompletedTask;
+            }
+
+            var leftName = selfData.Nickname ?? $"QQ {message.Sender.Id}";
+            var rightName = opponentData.Nickname ?? opponentName ?? $"QQ {opponentQq}";
+            var versions = charts.Select(x => x.Song.Version).Distinct().ToArray();
+            var version = versions.Length == 1 ? versions[0] : "";
+            var sortLabel = scope.Selectors.Any(x => x is PlateData.Selector.Constant or PlateData.Selector.ConstantRange)
+                ? "歌曲 ID 升序"
+                : "定数降序";
+            var batch = new MaiVersusBatch(
+                rawScope.Trim(),
+                version,
+                sortLabel,
+                charts,
+                new MaiVersusBatch.Player(leftName, selfData.Scores, selfData.Partial),
+                new MaiVersusBatch.Player(rightName, opponentData.Scores, opponentData.Partial));
+
+            await ReplyBatchVersus(message, batch);
+            return MarisaPluginTaskState.CompletedTask;
         }
 
     }
@@ -1768,7 +1796,7 @@ public partial class MaiMaiDx
             return MarisaPluginTaskState.CompletedTask;
         }
 
-        var pairs = SelectCharts(query!);
+        var pairs = PlateData.SelectCharts(query!, SongDb.SongList);
 
         if (pairs.Count == 0)
         {
@@ -1795,63 +1823,6 @@ public partial class MaiMaiDx
             _                                        => "命令格式错误",
         };
 
-        List<(double Constant, int LevelIdx, MaiMaiSong Song)> SelectCharts(PlateData.Query q)
-        {
-            // 默认难度由解析层决定；用户显式给出一个或多个谱面难度时，按解析得到的集合限定。
-            var levelIdxes = q.LevelIdxes;
-            // 带「复活曲」selector 时，版本牌放行复活曲（用于「真复活曲」= 首发自该版本的复活曲）。
-            var includeRevival = q.Selectors.Any(s => s is PlateData.Selector.Revival);
-            return SongDb.SongList
-                .SelectMany(song => song.Constants.Select((constant, i) => (constant, i, song)))
-                .Where(t => levelIdxes.Contains(t.i))
-                .Where(t => q.Selectors.All(sel => MatchSelector(sel, t.constant, t.i, t.song, includeRevival)))
-                .Where(t => !PlateData.IsPlateExcludedSong(q, t.song))
-                .Select(t => (t.constant, t.i, t.song))
-                .ToList();
-        }
-
-        // 单 chart × 单 selector 的命中判断；handler 用 Selectors.All(...) 求 AND 交集。
-        static bool MatchSelector(PlateData.Selector sel, double constant, int levelIdx, MaiMaiSong song, bool includeRevival) => sel switch
-        {
-            PlateData.Selector.Plate p => PlateData.MatchPlate(p, song, levelIdx, includeRevival),
-
-            // 复活曲集合（虚拟类别）。
-            PlateData.Selector.Revival => PlateData.IsRevivalSong(song.Id),
-
-            PlateData.Selector.Charter c =>
-                levelIdx < song.Charters.Count
-                && PlateData.MatchCharter(song.Charters[levelIdx], c.Name),
-
-            PlateData.Selector.CharterAlias ca =>
-                levelIdx < song.Charters.Count
-                && PlateData.MatchCharter(song.Charters[levelIdx], ca.Names, ca.Exclude),
-
-            // song-level substring 匹配，兼容 "sasakure.UK x DECO*27" 这种合作作曲名义。
-            PlateData.Selector.Artist a =>
-                !string.IsNullOrEmpty(song.Info.Artist)
-                && song.Info.Artist.Contains(a.Name, StringComparison.OrdinalIgnoreCase),
-
-            // 谱师 ∪ 作曲家：处理 "rintaro soma" 这种身兼两职的人。
-            PlateData.Selector.CharterOrArtist ca =>
-                (levelIdx < song.Charters.Count
-                 && PlateData.MatchCharter(song.Charters[levelIdx], ca.Name))
-                || (!string.IsNullOrEmpty(song.Info.Artist)
-                    && song.Info.Artist.Contains(ca.Name, StringComparison.OrdinalIgnoreCase)),
-
-            PlateData.Selector.Genre g =>
-                string.Equals(song.Info.Genre, g.FullName, StringComparison.Ordinal),
-
-            // 难度 label：匹 song.Levels[i] 精确相等
-            PlateData.Selector.Level lvl =>
-                levelIdx < song.Levels.Count
-                && string.Equals(song.Levels[levelIdx], lvl.Label, StringComparison.Ordinal),
-
-            // 定数：song.Constants[i] 精确等于 (0.05 tolerance for floating point safety；定数小数点 1 位)
-            PlateData.Selector.Constant cst =>
-                Math.Abs(constant - cst.Value) < 0.05,
-
-            _ => false,
-        };
     }
 
     #endregion
