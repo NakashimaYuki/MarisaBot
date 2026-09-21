@@ -68,4 +68,21 @@ public class SongDbResetTest
         Assert.That(selected, Has.Count.EqualTo(1));
         Assert.That(selected[0], Is.SameAs(db));
     }
+
+    [Test]
+    public void SearchSongExact_DoesNotTreatEmptyInputAsWholeCatalog()
+    {
+        var db = new SongDb<StubSong>("nonexistent.tsv", "nonexistent.tmp", () =>
+        [
+            new StubSong { Id = 1, Title = "exact title" },
+            new StubSong { Id = 2, Title = "another title" }
+        ]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(db.SearchSongExact("".AsMemory()).Count, Is.Zero);
+            Assert.That(db.SearchSongExact("exact title".AsMemory()).Select(x => x.Id), Is.EqualTo(new[] { 1L }));
+            Assert.That(db.SearchSongExact("id999".AsMemory()), Is.Empty);
+        });
+    }
 }
