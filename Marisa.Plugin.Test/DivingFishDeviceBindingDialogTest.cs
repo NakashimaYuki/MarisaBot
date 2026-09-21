@@ -146,7 +146,7 @@ public class DivingFishDeviceBindingDialogTest(string game, string command, bool
         MockAuthorization();
         await StartBinding();
         await Dispatch(reply);
-        Assert.That(await NextReply(), Is.EqualTo("绑定已取消"));
+        Assert.That(_queue.SendQueue.Reader.TryRead(out _), Is.False);
         Assert.That(DialogManager.ContainsDialog(Key), Is.False);
         Assert.That(_clock.ActiveTimerCount, Is.Zero);
 
@@ -169,7 +169,7 @@ public class DivingFishDeviceBindingDialogTest(string game, string command, bool
         }
 
         _clock.Advance(TimeSpan.FromMinutes(10));
-        Assert.That(await NextReply(), Is.EqualTo("绑定已取消"));
+        Assert.That(_queue.SendQueue.Reader.TryRead(out _), Is.False);
         Assert.That(DialogManager.ContainsDialog(Key), Is.False);
         Assert.That(_clock.ActiveTimerCount, Is.Zero);
         await Dispatch("收到");
@@ -244,7 +244,7 @@ public class DivingFishDeviceBindingDialogTest(string game, string command, bool
         {
             await responseArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Dispatch("取消");
-            Assert.That(await NextReply(), Is.EqualTo("绑定已取消"));
+            Assert.That(_queue.SendQueue.Reader.TryRead(out _), Is.False);
         }
         finally
         {

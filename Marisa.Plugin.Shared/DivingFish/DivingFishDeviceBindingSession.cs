@@ -33,7 +33,7 @@ public sealed class DivingFishDeviceBindingSession(
                 await Task.Delay(TimeSpan.FromMinutes(10), timeProvider, _lifetime.Token);
                 lock (_gate)
                 {
-                    if (Finish()) message.Reply("绑定已取消");
+                    Finish();
                 }
             }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
@@ -57,7 +57,7 @@ public sealed class DivingFishDeviceBindingSession(
 
                     if (timeProvider.GetUtcNow() >= _deadline)
                     {
-                        if (Finish()) message.Reply("绑定已取消");
+                        Finish();
                         return;
                     }
 
@@ -83,13 +83,12 @@ public sealed class DivingFishDeviceBindingSession(
         lock (_gate)
         {
             var result = _pending;
-            if (!Finish()) return MarisaPluginTaskState.CompletedTask;
+            if (!Finish()) return MarisaPluginTaskState.Canceled;
 
             if (!string.Equals(next.Command.Trim().ToString(), "收到", StringComparison.Ordinal) ||
                 result is not { } entry || timeProvider.GetUtcNow() >= _deadline)
             {
-                next.Reply("绑定已取消");
-                return MarisaPluginTaskState.CompletedTask;
+                return MarisaPluginTaskState.Canceled;
             }
 
             DivingFishBindingService.Commit(next.Sender.Id, entry.Sub, "", entry.Scope, game);
