@@ -156,6 +156,26 @@ public class MaiMaiDxDivingFishDataFetcherTest
     }
 
     [Test]
+    public async Task GetScores_Should_Use_Qq_Query_When_Command_Is_Empty()
+    {
+        var expected = CreateSongScore(43, 13.0, 100.5);
+        var fetcher = new TestDivingFishDataFetcher(CreateSongDb(), [expected]);
+        var message = new Message(null!, [])
+        {
+            Sender = new SenderInfo(1, "sender"),
+            Command = "".AsMemory()
+        };
+
+        var scores = await fetcher.GetScores(message);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fetcher.LastQqOnly, Is.True);
+            Assert.That(scores[(expected.Id, expected.LevelIdx)], Is.SameAs(expected));
+        });
+    }
+
+    [Test]
     public async Task GetScores_OAuth_Username_Should_Use_Public_Target_Records()
     {
         var expected = CreateSongScore(43, 13.0, 100.5);

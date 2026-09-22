@@ -1766,7 +1766,7 @@ public partial class MaiMaiDx
         }
 
         var fetcher = GetDataFetcher(message);
-        var scores  = await fetcher.GetScores(message);
+        var scores  = await fetcher.GetScores(message with { Command = "".AsMemory() });
 
         // 标题原样使用用户输入的命令文本（含"完成表"）。
         var im = await MaiMaiDraw.DrawPlateProgress(query!, pairs, scores, raw.Trim());
